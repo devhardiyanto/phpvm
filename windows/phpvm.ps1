@@ -1,7 +1,7 @@
 # ==============================================================================
 #  phpvm.ps1 — PHP Version Manager for Windows
 #  Compatible with: CMD (via phpvm.cmd shim) and PowerShell
-#  Repo: https://github.com/devhardiyanto/phpvm
+#  Repo: https://github.com/YOUR_USERNAME/phpvm
 # ==============================================================================
 
 param(
@@ -14,14 +14,14 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-$PHPVM_VERSION = "1.3.0"
+$PHPVM_VERSION = "1.4.0"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
 $PHPVM_BIN     = "$PHPVM_DIR\bin"
 
 # ── Update checker (once per day, via version.txt) ───────────────────────────
-$PHPVM_UPDATE_URL   = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
+$PHPVM_UPDATE_URL   = "https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/version.txt"
 $PHPVM_LAST_CHECK   = "$PHPVM_DIR\.last_update_check"
 $PHPVM_CHECK_INTERVAL = 86400  # 24 hours in seconds
 
@@ -53,7 +53,7 @@ function Check-PHPVMUpdate {
             Write-Host ""
             Write-Host "  ┌─────────────────────────────────────────────────┐" -ForegroundColor Yellow
             Write-Host "  │  phpvm update available: $PHPVM_VERSION → $latest" -ForegroundColor Yellow
-            Write-Host "  │  Get it: https://github.com/devhardiyanto/phpvm  │" -ForegroundColor Yellow
+            Write-Host "  │  Get it: https://github.com/YOUR_USERNAME/phpvm  │" -ForegroundColor Yellow
             Write-Host "  └─────────────────────────────────────────────────┘" -ForegroundColor Yellow
             Write-Host ""
         }
@@ -79,26 +79,47 @@ function Initialize-PHPVM {
 }
 
 # ── PHP build metadata ────────────────────────────────────────────────────────
+# Helper: run php -r and strip any Warning/Notice lines from output
+function Invoke-PHP ([string]$exe, [string]$code) {
+    $out = & $exe -r $code 2>$null
+    # Filter out lines that are PHP warnings/notices bleeding into stdout
+    $clean = $out | Where-Object { $_ -notmatch "^(PHP )?(Warning|Notice|Deprecated|Fatal|Parse)" }
+    return ($clean -join "").Trim()
+}
+
 function Get-PHPBuildInfo ([string]$phpExe = "") {
     if (-not $phpExe) {
         if (Test-Path "$CURRENT_LINK\php.exe") { $phpExe = "$CURRENT_LINK\php.exe" }
         else { throw "No active PHP version. Run: phpvm use <version>" }
     }
 
-    $raw     = & $phpExe -i 2>$null
-    $version = (& $phpExe -r "echo PHP_VERSION;" 2>$null).Trim()
-    $short   = $version -replace '^(\d+\.\d+)\..*', '$1'
+    # php -i also leaks warnings to stdout on some Windows builds — filter them too
+    $raw  = (& $phpExe -i 2>$null) | Where-Object { $_ -notmatch "^(PHP )?(Warning|Notice|Deprecated)" }
+
+    $version = Invoke-PHP $phpExe "echo PHP_VERSION;"
+    # Extra safety: extract only the semver part in case anything leaked through
+    if ($version -match '(\d+\.\d+\.\d+)') { $version = $Matches[1] }
+    $short = $version -replace '^(\d+\.\d+)\..*', '$1'
 
     $tsLine = ($raw | Select-String "Thread Safety" | Select-Object -First 1).ToString()
     $isTS   = $tsLine -match "enabled"
 
     $compLine = ($raw | Select-String "Compiler" | Select-Object -First 1).ToString()
     $vs = switch -Regex ($compLine) {
+        "MSVC17|VS17" { "vs17"; break }
         "MSVC16|VS16" { "vs16"; break }
         "MSVC15|VS15" { "vs15"; break }
-        "MSVC14|VS14" { "vs14"; break }
-        default        { "vs16" }
+        default        { Get-VSVersion $version }  # fallback: derive from version number
     }
+
+    # ExtDir: ask PHP first, fallback to <php_root>\ext
+    $phpRoot = Split-Path $phpExe -Parent
+    $extDir  = Invoke-PHP $phpExe "echo ini_get('extension_dir');"
+    if (-not $extDir -or $extDir -eq "") { $extDir = "$phpRoot\ext" }
+    # Resolve relative path (PHP sometimes returns "ext" not full path)
+    if (-not [System.IO.Path]::IsPathRooted($extDir)) { $extDir = "$phpRoot\$extDir" }
+
+    $iniPath = Invoke-PHP $phpExe "echo php_ini_loaded_file();"
 
     return @{
         Version = $version
@@ -107,10 +128,12 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
         VS      = $vs
         Arch    = "x64"
         Exe     = $phpExe
-        ExtDir  = (& $phpExe -r "echo ini_get('extension_dir');" 2>$null).Trim()
-        IniPath = (& $phpExe -r "echo php_ini_loaded_file();" 2>$null).Trim()
+        Root    = $phpRoot
+        ExtDir  = $extDir
+        IniPath = $iniPath
     }
 }
+
 
 # ── Resolve PHP download URL ──────────────────────────────────────────────────
 # VS version mapping (based on windows.php.net actual filenames):
@@ -839,6 +862,10 @@ function Show-Help {
   COMPOSER
     phpvm composer                 Install Composer for active PHP version
 
+  SELF UPDATE
+    phpvm upgrade                  Upgrade phpvm to latest version
+    phpvm version                  Show current phpvm version
+
   LARAVEL QUICK SETUP
     phpvm ext laravel              Enable all Laravel extensions (full)
     phpvm ext laravel minimal      Required extensions only
@@ -867,9 +894,46 @@ function Show-Help {
 "@ -ForegroundColor Cyan
 }
 
-# ==============================================================================
-#  ENTRY POINT
-# ==============================================================================
+function Invoke-Upgrade {
+    $scriptUrl  = "https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/windows/phpvm.ps1"
+    $versionUrl = "https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/version.txt"
+    $scriptDest = "$PHPVM_DIR\phpvm.ps1"
+
+    Write-Step "Checking latest version ..."
+    try {
+        $ProgressPreference = "SilentlyContinue"
+        $latest = (Invoke-WebRequest -Uri $versionUrl -UseBasicParsing -TimeoutSec 5).Content.Trim()
+    } catch {
+        Write-Err "Could not reach GitHub. Check your connection."
+        return
+    }
+
+    if ([version]$latest -le [version]$PHPVM_VERSION) {
+        Write-Ok "Already up to date. (phpvm $PHPVM_VERSION)"
+        return
+    }
+
+    Write-Step "Upgrading phpvm $PHPVM_VERSION → $latest ..."
+
+    # Backup current script
+    $backup = "$PHPVM_DIR\phpvm.ps1.bak"
+    Copy-Item $scriptDest $backup -Force
+    Write-Dim "Backup saved: $backup"
+
+    try {
+        Invoke-WebRequest -Uri $scriptUrl -OutFile $scriptDest -UseBasicParsing
+        Unblock-File $scriptDest
+        Write-Ok "phpvm upgraded to $latest!"
+        Write-Dim "Restart your terminal to use the new version."
+    } catch {
+        # Rollback on failure
+        Write-Err "Upgrade failed: $_"
+        Copy-Item $backup $scriptDest -Force
+        Write-Warn "Rolled back to previous version."
+    }
+}
+
+
 Initialize-PHPVM
 Check-PHPVMUpdate
 
@@ -883,6 +947,7 @@ switch ($Command.ToLower()) {
     "ini"                           { Invoke-Ini }
     "ext"                           { Invoke-Ext $SubOrVer $Arg2 }
     "composer"                      { Invoke-Composer }
+    { $_ -in "upgrade", "update" }  { Invoke-Upgrade }
     { $_ -in "version", "-v" }      { Write-Ok "phpvm $PHPVM_VERSION" }
     { $_ -in "help", "--help" }     { Show-Help }
     default                         { Show-Help }

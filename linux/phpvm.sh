@@ -2,7 +2,7 @@
 # ==============================================================================
 #  phpvm — PHP Version Manager for Linux
 #  Installs PHP from source (php.net). Manages per-version installs.
-#  Repo: https://github.com/devhardiyanto/phpvm
+#  Repo: https://github.com/YOUR_USERNAME/phpvm
 #
 #  Usage:
 #    source ~/.phpvm/phpvm.sh    (add to ~/.bashrc or ~/.zshrc)
@@ -10,13 +10,13 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.3.0"
+PHPVM_VERSION="1.4.0"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
 PHPVM_CACHE="$PHPVM_DIR/cache"
 PHPVM_LOG="$PHPVM_DIR/build.log"
-PHPVM_UPDATE_URL="https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
+PHPVM_UPDATE_URL="https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/version.txt"
 PHPVM_LAST_CHECK="$PHPVM_DIR/.last_update_check"
 PHPVM_CHECK_INTERVAL=86400  # 24 hours
 
@@ -591,6 +591,10 @@ phpvm_help() {
     phpvm ini                      Open active php.ini in \$EDITOR
     phpvm deps                     Print dependency install command
 
+  SELF UPDATE
+    phpvm upgrade                  Upgrade phpvm to latest version
+    phpvm version                  Show current phpvm version
+
   EXTENSION MANAGEMENT
     phpvm ext list                 Show loaded extensions
     phpvm ext enable  <name>       Enable extension (conf.d drop-in)
@@ -613,6 +617,69 @@ EOF
 }
 
 # ==============================================================================
+#  SELF UPDATE
+# ==============================================================================
+phpvm_upgrade() {
+    local script_url="https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/linux/phpvm.sh"
+    local version_url="https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/version.txt"
+    local script_dest="$PHPVM_DIR/phpvm.sh"
+    local backup="$PHPVM_DIR/phpvm.sh.bak"
+
+    _step "Checking latest version ..."
+
+    local latest
+    if command -v curl &>/dev/null; then
+        latest=$(curl -fsSL --max-time 5 "$version_url" 2>/dev/null | tr -d '[:space:]')
+    elif command -v wget &>/dev/null; then
+        latest=$(wget -qO- --timeout=5 "$version_url" 2>/dev/null | tr -d '[:space:]')
+    else
+        _err "curl or wget is required."
+        return 1
+    fi
+
+    if [[ -z "$latest" ]]; then
+        _err "Could not reach GitHub. Check your connection."
+        return 1
+    fi
+
+    # Compare versions
+    local newer
+    newer=$(printf '%s\n%s' "$PHPVM_VERSION" "$latest" | sort -V | tail -1)
+    if [[ "$newer" == "$PHPVM_VERSION" && "$latest" == "$PHPVM_VERSION" ]]; then
+        _ok "Already up to date. (phpvm $PHPVM_VERSION)"
+        return 0
+    fi
+
+    _step "Upgrading phpvm $PHPVM_VERSION → $latest ..."
+
+    # Backup
+    cp "$script_dest" "$backup"
+    _dim "Backup saved: $backup"
+
+    # Download new version
+    local tmp="$PHPVM_DIR/phpvm.sh.tmp"
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$script_url" -o "$tmp" || { _err "Download failed."; return 1; }
+    else
+        wget -qO "$tmp" "$script_url" || { _err "Download failed."; return 1; }
+    fi
+
+    # Verify it looks like a valid phpvm script
+    if ! grep -q "PHPVM_VERSION" "$tmp"; then
+        _err "Downloaded file seems invalid. Rolling back."
+        rm -f "$tmp"
+        return 1
+    fi
+
+    mv "$tmp" "$script_dest"
+    chmod +x "$script_dest"
+
+    _ok "phpvm upgraded to $latest!"
+    _dim "Run: source ~/.bashrc  (or restart terminal)"
+    _dim "Backup of old version: $backup"
+}
+
+# ==============================================================================
 #  ENTRY POINT
 # ==============================================================================
 phpvm() {
@@ -623,18 +690,19 @@ phpvm() {
     shift || true
 
     case "$cmd" in
-        install)            phpvm_install   "$@" ;;
-        use)                phpvm_use       "$@" ;;
-        list|ls)            phpvm_list ;;
-        current)            phpvm_current ;;
-        uninstall|remove)   phpvm_uninstall "$@" ;;
-        which)              phpvm_which ;;
-        ini)                phpvm_ini ;;
-        deps)               phpvm_deps ;;
-        ext)                phpvm_ext       "$@" ;;
-        version|-v)         _ok "phpvm $PHPVM_VERSION" ;;
-        help|--help)        phpvm_help ;;
-        *)                  phpvm_help ;;
+        install)               phpvm_install   "$@" ;;
+        use)                   phpvm_use       "$@" ;;
+        list|ls)               phpvm_list ;;
+        current)               phpvm_current ;;
+        uninstall|remove)      phpvm_uninstall "$@" ;;
+        which)                 phpvm_which ;;
+        ini)                   phpvm_ini ;;
+        deps)                  phpvm_deps ;;
+        ext)                   phpvm_ext       "$@" ;;
+        upgrade|update)        phpvm_upgrade ;;
+        version|-v)            _ok "phpvm $PHPVM_VERSION" ;;
+        help|--help)           phpvm_help ;;
+        *)                     phpvm_help ;;
     esac
 }
 
