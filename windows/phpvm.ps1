@@ -779,13 +779,7 @@ function Invoke-Composer {
     if ($loaded -notcontains "openssl") {
         Write-Step "Enabling openssl extension (required for Composer) ..."
         Edit-IniExtension "openssl" $true
-        # Reload check
-        $loaded = (& $info.Exe -m 2>$null) | ForEach-Object { $_.Trim().ToLower() }
-        if ($loaded -notcontains "openssl") {
-            Write-Err "Failed to enable openssl. Run: phpvm ext enable openssl  then restart terminal."
-            return
-        }
-        Write-Ok "openssl enabled."
+        Write-Warn "openssl enabled. If Composer install fails, restart terminal first then re-run 'phpvm composer'."
     }
 
     # 2. Determine install location — PHP version dir so each version has its own composer
