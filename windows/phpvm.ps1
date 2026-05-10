@@ -932,6 +932,7 @@ function Invoke-FixIni {
 }
 
 
+function Invoke-Upgrade {
     $scriptUrl  = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main/windows/phpvm.ps1"
     $versionUrl = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
     $scriptDest = "$PHPVM_DIR\phpvm.ps1"
