@@ -18,14 +18,14 @@ Restart your terminal. No admin required.
 ### Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/linux/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/devhardiyanto/phpvm/main/linux/install.sh | bash
 source ~/.bashrc
 ```
 
 Or manually:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/phpvm.git ~/.phpvm-src
+git clone https://github.com/devhardiyanto/phpvm.git ~/.phpvm-src
 source ~/.phpvm-src/linux/phpvm.sh
 ```
 
