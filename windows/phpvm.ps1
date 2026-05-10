@@ -71,6 +71,8 @@ function Write-Dim  ($m) { Write-Host "  $m" -ForegroundColor DarkGray }
 
 # ── Init ──────────────────────────────────────────────────────────────────────
 function Initialize-PHPVM {
+    # Force TLS 1.2 — GitHub blocks older TLS versions
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     foreach ($d in @($PHPVM_DIR, $VERSIONS_DIR, $PHPVM_BIN)) {
         if (-not (Test-Path $d)) {
             New-Item -ItemType Directory -Path $d -Force | Out-Null
