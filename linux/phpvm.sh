@@ -2,7 +2,7 @@
 # ==============================================================================
 #  phpvm — PHP Version Manager for Linux
 #  Installs PHP from source (php.net). Manages per-version installs.
-#  Repo: https://github.com/YOUR_USERNAME/phpvm
+#  Repo: https://github.com/devhardiyanto/phpvm
 #
 #  Usage:
 #    source ~/.phpvm/phpvm.sh    (add to ~/.bashrc or ~/.zshrc)
@@ -16,7 +16,7 @@ PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
 PHPVM_CACHE="$PHPVM_DIR/cache"
 PHPVM_LOG="$PHPVM_DIR/build.log"
-PHPVM_UPDATE_URL="https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/version.txt"
+PHPVM_UPDATE_URL="https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
 PHPVM_LAST_CHECK="$PHPVM_DIR/.last_update_check"
 PHPVM_CHECK_INTERVAL=86400  # 24 hours
 

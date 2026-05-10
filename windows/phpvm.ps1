@@ -1,7 +1,7 @@
 # ==============================================================================
 #  phpvm.ps1 — PHP Version Manager for Windows
 #  Compatible with: CMD (via phpvm.cmd shim) and PowerShell
-#  Repo: https://github.com/YOUR_USERNAME/phpvm
+#  Repo: https://github.com/devhardiyanto/phpvm
 # ==============================================================================
 
 param(
@@ -21,7 +21,7 @@ $CURRENT_LINK  = "$PHPVM_DIR\current"
 $PHPVM_BIN     = "$PHPVM_DIR\bin"
 
 # ── Update checker (once per day, via version.txt) ───────────────────────────
-$PHPVM_UPDATE_URL   = "https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/version.txt"
+$PHPVM_UPDATE_URL   = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
 $PHPVM_LAST_CHECK   = "$PHPVM_DIR\.last_update_check"
 $PHPVM_CHECK_INTERVAL = 86400  # 24 hours in seconds
 
@@ -53,7 +53,7 @@ function Check-PHPVMUpdate {
             Write-Host ""
             Write-Host "  ┌─────────────────────────────────────────────────┐" -ForegroundColor Yellow
             Write-Host "  │  phpvm update available: $PHPVM_VERSION → $latest" -ForegroundColor Yellow
-            Write-Host "  │  Get it: https://github.com/YOUR_USERNAME/phpvm  │" -ForegroundColor Yellow
+            Write-Host "  │  Get it: https://github.com/devhardiyanto/phpvm  │" -ForegroundColor Yellow
             Write-Host "  └─────────────────────────────────────────────────┘" -ForegroundColor Yellow
             Write-Host ""
         }

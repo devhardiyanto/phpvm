@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ==============================================================================
 #  install.sh — phpvm installer for Linux
-#  Usage: curl -fsSL https://raw.githubusercontent.com/YOUR/phpvm/main/install.sh | bash
+#  Usage: curl -fsSL https://raw.githubusercontent.com/devhardiyanto/phpvm/main/install.sh | bash
 # ==============================================================================
 
 set -e
 
 PHPVM_VERSION="1.0.0"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
-PHPVM_REPO="https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main"
+PHPVM_REPO="https://raw.githubusercontent.com/devhardiyanto/phpvm/main"
 
 _ok()   { echo -e "  \033[32m$*\033[0m"; }
 _step() { echo -e "  \033[36m> $*\033[0m"; }
