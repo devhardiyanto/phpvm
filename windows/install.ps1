@@ -33,6 +33,7 @@ if (-not (Test-Path $scriptSrc)) {
     exit 1
 }
 Copy-Item $scriptSrc "$PHPVM_DIR\phpvm.ps1" -Force
+Unblock-File "$PHPVM_DIR\phpvm.ps1"
 Write-Ok "Copied phpvm.ps1 -> $PHPVM_DIR\phpvm.ps1"
 
 # 3. Create CMD launcher (phpvm.cmd) — works in CMD and PowerShell

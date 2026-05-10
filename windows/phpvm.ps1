@@ -14,13 +14,55 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-$PHPVM_VERSION = "1.0.0"
+$PHPVM_VERSION = "1.3.0"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
 $PHPVM_BIN     = "$PHPVM_DIR\bin"
 
-# ── Output helpers ────────────────────────────────────────────────────────────
+# ── Update checker (once per day, via version.txt) ───────────────────────────
+$PHPVM_UPDATE_URL   = "https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/version.txt"
+$PHPVM_LAST_CHECK   = "$PHPVM_DIR\.last_update_check"
+$PHPVM_CHECK_INTERVAL = 86400  # 24 hours in seconds
+
+function Check-PHPVMUpdate {
+    # Skip if no internet or in CI environments
+    if ($env:CI -or $env:PHPVM_NO_UPDATE_CHECK) { return }
+
+    # Only check once per day
+    if (Test-Path $PHPVM_LAST_CHECK) {
+        $lastCheck = (Get-Item $PHPVM_LAST_CHECK).LastWriteTime
+        $elapsed   = (Get-Date) - $lastCheck
+        if ($elapsed.TotalSeconds -lt $PHPVM_CHECK_INTERVAL) { return }
+    }
+
+    # Update timestamp first (avoid hammering if fetch is slow)
+    [System.IO.File]::WriteAllText($PHPVM_LAST_CHECK, (Get-Date).ToString())
+
+    try {
+        $ProgressPreference = "SilentlyContinue"
+        $latest = (Invoke-WebRequest -Uri $PHPVM_UPDATE_URL -UseBasicParsing -TimeoutSec 3).Content.Trim()
+
+        if ([string]::IsNullOrEmpty($latest)) { return }
+
+        # Compare semantic versions
+        $current = [version]$PHPVM_VERSION
+        $remote  = [version]$latest
+
+        if ($remote -gt $current) {
+            Write-Host ""
+            Write-Host "  ┌─────────────────────────────────────────────────┐" -ForegroundColor Yellow
+            Write-Host "  │  phpvm update available: $PHPVM_VERSION → $latest" -ForegroundColor Yellow
+            Write-Host "  │  Get it: https://github.com/YOUR_USERNAME/phpvm  │" -ForegroundColor Yellow
+            Write-Host "  └─────────────────────────────────────────────────┘" -ForegroundColor Yellow
+            Write-Host ""
+        }
+    } catch {
+        # Silently ignore — no internet, timeout, etc.
+    }
+}
+
+
 function Write-Ok   ($m) { Write-Host "  $m" -ForegroundColor Green  }
 function Write-Err  ($m) { Write-Host "  [error] $m" -ForegroundColor Red    }
 function Write-Step ($m) { Write-Host "  > $m" -ForegroundColor Cyan   }
@@ -71,8 +113,21 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
 }
 
 # ── Resolve PHP download URL ──────────────────────────────────────────────────
+# VS version mapping (based on windows.php.net actual filenames):
+#   PHP 7.x        → vc15
+#   PHP 8.0 - 8.3  → vs16
+#   PHP 8.4+       → vs17
+function Get-VSVersion ([string]$ver) {
+    $major = [int]($ver -split '\.')[0]
+    $minor = [int]($ver -split '\.')[1]
+    if ($major -eq 7)                          { return "vc15" }
+    if ($major -eq 8 -and $minor -le 3)        { return "vs16" }
+    if ($major -eq 8 -and $minor -ge 4)        { return "vs17" }
+    return "vs17"  # default for future versions
+}
+
 function Resolve-PHPURL ([string]$ver) {
-    $vs = if ($ver -match "^7\.") { "vs15" } else { "vs16" }
+    $vs = Get-VSVersion $ver
     $urls = @(
         "https://windows.php.net/downloads/releases/php-$ver-Win32-$vs-x64.zip"
         "https://windows.php.net/downloads/releases/php-$ver-nts-Win32-$vs-x64.zip"
@@ -145,7 +200,16 @@ function Invoke-Install ([string]$ver) {
     $url = Resolve-PHPURL $ver
     if (-not $url) {
         Write-Err "PHP $ver not found on windows.php.net"
-        Write-Dim "Browse: https://windows.php.net/downloads/releases/"
+        Write-Dim ""
+        Write-Dim "Available versions (latest per branch):"
+        Write-Dim "  PHP 8.5.x  -> phpvm install 8.5.1"
+        Write-Dim "  PHP 8.4.x  -> phpvm install 8.4.16"
+        Write-Dim "  PHP 8.3.x  -> phpvm install 8.3.29"
+        Write-Dim "  PHP 8.2.x  -> phpvm install 8.2.30"
+        Write-Dim "  PHP 8.1.x  -> phpvm install 8.1.34"
+        Write-Dim "  PHP 7.4.x  -> phpvm install 7.4.33"
+        Write-Dim ""
+        Write-Dim "Full list: https://windows.php.net/downloads/releases/"
         return
     }
 
@@ -518,6 +582,115 @@ if (extension_loaded('$extName')) {
     Write-Host ""
 }
 
+function Ext-Laravel ([string]$preset = "full") {
+    $info = Get-PHPBuildInfo
+
+    # Extensions bundled with PHP (just need enable in php.ini)
+    $bundledMinimal = @(
+        "openssl"       # HTTPS, encryption, queue
+        "pdo"           # database abstraction
+        "pdo_mysql"     # MySQL / MariaDB
+        "pdo_sqlite"    # SQLite (testing)
+        "mbstring"      # multibyte string, validation
+        "tokenizer"     # Blade template parsing
+        "xml"           # XML processing
+        "ctype"         # character validation
+        "fileinfo"      # MIME type detection (file upload)
+        "bcmath"        # decimal precision (payments)
+        "curl"          # HTTP client (Guzzle, APIs)
+        "zip"           # compress/extract
+        "sodium"        # encryption (Laravel Crypt)
+    )
+
+    $bundledFull = @(
+        "intl"          # internationalisation, number/date formatting
+        "gd"            # image manipulation (resize, thumbnail)
+        "exif"          # read EXIF metadata from photos
+        "opcache"       # bytecode cache — required in production
+        "pdo_pgsql"     # PostgreSQL driver
+        "pgsql"         # PostgreSQL native functions
+        "sockets"       # Laravel Reverb / WebSocket / queue worker
+    )
+
+    # PECL extensions (need download + enable)
+    $peclFull = @(
+        "redis"         # Redis cache, session, queue driver
+    )
+
+    $enableList  = $bundledMinimal
+    $peclList    = @()
+
+    if ($preset -ne "minimal") {
+        $enableList += $bundledFull
+        $peclList   += $peclFull
+    }
+
+    # ── Banner ────────────────────────────────────────────────
+    $label = if ($preset -eq "minimal") { "minimal" } else { "full" }
+    Write-Host ""
+    Write-Host "  Laravel extension setup ($label) — PHP $($info.Version)" -ForegroundColor Cyan
+    Write-Host "  ─────────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host ""
+
+    # ── Step 1: Enable bundled extensions ────────────────────
+    Write-Host "  [1/2] Enabling bundled extensions ..." -ForegroundColor Yellow
+    $extDir = $info.ExtDir
+
+    foreach ($ext in $enableList) {
+        $dllPath = "$extDir\php_$ext.dll"
+
+        # Skip if DLL doesn't exist (e.g. pdo_pgsql not shipped in some builds)
+        if (-not (Test-Path $dllPath)) {
+            Write-Host "       skip  $ext  (DLL not found in this PHP build)" -ForegroundColor DarkGray
+            continue
+        }
+
+        $loaded = (& $info.Exe -m 2>$null) | ForEach-Object { $_.Trim().ToLower() }
+        if ($loaded -contains $ext.ToLower()) {
+            Write-Host ("       {0,-18} already ON" -f $ext) -ForegroundColor DarkGray
+        } else {
+            Edit-IniExtension $ext $true
+        }
+    }
+
+    # ── Step 2: PECL extensions ───────────────────────────────
+    if ($peclList.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  [2/2] Installing PECL extensions ..." -ForegroundColor Yellow
+        foreach ($ext in $peclList) {
+            $dllPath = "$extDir\php_$ext.dll"
+            if (Test-Path $dllPath) {
+                $loaded = (& $info.Exe -m 2>$null) | ForEach-Object { $_.Trim().ToLower() }
+                if ($loaded -contains $ext.ToLower()) {
+                    Write-Host ("       {0,-18} already ON" -f $ext) -ForegroundColor DarkGray
+                } else {
+                    Write-Host "       $ext  (DLL exists, enabling ...)" -ForegroundColor Cyan
+                    Edit-IniExtension $ext $true
+                }
+            } else {
+                Install-PECLExt $ext
+                Edit-IniExtension $ext $true
+            }
+        }
+    }
+
+    # ── Summary ───────────────────────────────────────────────
+    Write-Host ""
+    Write-Ok "Done! Restart your terminal then verify with: php -m"
+    Write-Host ""
+
+    if ($preset -eq "minimal") {
+        Write-Dim "For Redis + GD + opcache + intl, run: phpvm ext laravel full"
+    } else {
+        Write-Dim "Optional extras:"
+        Write-Dim "  phpvm ext install xdebug      # debugger"
+        Write-Dim "  phpvm ext install imagick      # advanced image processing"
+        Write-Dim "  phpvm ext enable pdo_pgsql     # if using PostgreSQL"
+        Write-Dim "  phpvm composer                 # install Composer"
+    }
+    Write-Host ""
+}
+
 function Invoke-Ext ([string]$sub, [string]$name) {
     switch ($sub.ToLower()) {
         { $_ -in "list", "ls" } { Ext-List }
@@ -530,6 +703,7 @@ function Invoke-Ext ([string]$sub, [string]$name) {
             else { Install-PECLExt $name $Arg2 }
         }
         "info"    { if ($name) { Ext-Info $name } else { Write-Err "Usage: phpvm ext info <name>" } }
+        "laravel" { Ext-Laravel $name }
         default   { Show-ExtHelp }
     }
 }
@@ -552,6 +726,9 @@ function Show-ExtHelp {
   phpvm ext install <name> <ver>   Install specific PECL version
   phpvm ext install xdebug         Install XDebug (xdebug.org)
   phpvm ext info    <name>         Extension details
+  phpvm ext laravel                Enable all Laravel extensions (full)
+  phpvm ext laravel minimal        Enable only required Laravel extensions
+  phpvm ext laravel full           Enable required + recommended + Redis
 
   Common extensions:
     phpvm ext enable mbstring       phpvm ext enable curl
@@ -560,6 +737,88 @@ function Show-ExtHelp {
     phpvm ext install xdebug        phpvm ext install mongodb
 
 "@ -ForegroundColor Cyan
+}
+
+function Invoke-Composer {
+    # 1. Ensure openssl is enabled (required for https)
+    $info = Get-PHPBuildInfo
+    $loaded = (& $info.Exe -m 2>$null) | ForEach-Object { $_.Trim().ToLower() }
+    if ($loaded -notcontains "openssl") {
+        Write-Step "Enabling openssl extension (required for Composer) ..."
+        Edit-IniExtension "openssl" $true
+        # Reload check
+        $loaded = (& $info.Exe -m 2>$null) | ForEach-Object { $_.Trim().ToLower() }
+        if ($loaded -notcontains "openssl") {
+            Write-Err "Failed to enable openssl. Run: phpvm ext enable openssl  then restart terminal."
+            return
+        }
+        Write-Ok "openssl enabled."
+    }
+
+    # 2. Determine install location — PHP version dir so each version has its own composer
+    $phpRoot    = Split-Path $info.Exe -Parent
+    $composerPhar = "$phpRoot\composer.phar"
+    $composerBat  = "$phpRoot\composer.bat"
+
+    if (Test-Path $composerBat) {
+        Write-Warn "Composer already installed at $composerBat"
+        Write-Dim "Run: composer --version"
+        return
+    }
+
+    # 3. Download installer and verify hash
+    $installerUrl  = "https://getcomposer.org/installer"
+    $installerFile = "$env:TEMP\composer-setup.php"
+    $sigUrl        = "https://composer.github.io/installer.sig"
+
+    Write-Step "Downloading Composer installer ..."
+    try {
+        $ProgressPreference = "SilentlyContinue"
+        Invoke-WebRequest -Uri $installerUrl -OutFile $installerFile -UseBasicParsing
+        $expectedHash = (Invoke-WebRequest -Uri $sigUrl -UseBasicParsing).Content.Trim()
+    } catch {
+        Write-Err "Download failed: $_"
+        return
+    }
+
+    # 4. Verify SHA-384 hash
+    Write-Step "Verifying installer integrity ..."
+    $actualHash = (& $info.Exe -r "echo hash_file('sha384', '$($installerFile -replace '\\','\\\\')');")
+    if ($actualHash -ne $expectedHash) {
+        Write-Err "Hash mismatch! Installer may be corrupt or tampered."
+        Remove-Item $installerFile -Force
+        return
+    }
+    Write-Ok "Hash verified."
+
+    # 5. Run installer — outputs composer.phar to current dir, move to PHP root
+    Write-Step "Installing Composer ..."
+    Push-Location $phpRoot
+    & $info.Exe $installerFile --quiet
+    Pop-Location
+
+    if (-not (Test-Path $composerPhar)) {
+        Write-Err "composer.phar not created. Check PHP error output above."
+        Remove-Item $installerFile -Force
+        return
+    }
+
+    Remove-Item $installerFile -Force
+
+    # 6. Create composer.bat shim so 'composer' works globally from CMD + PS
+    $bat = @"
+@echo off
+php "%~dp0composer.phar" %*
+"@
+    $bat | Set-Content $composerBat -Encoding ASCII
+    Write-Ok "Composer installed!"
+    Write-Ok "  phar : $composerPhar"
+    Write-Ok "  shim : $composerBat"
+    Write-Host ""
+    & $info.Exe "$phpRoot\composer.phar" --version
+    Write-Host ""
+    Write-Dim "Note: composer.bat is inside the PHP version folder."
+    Write-Dim "If you switch PHP version, run 'phpvm composer' again for that version."
 }
 
 function Show-Help {
@@ -576,6 +835,14 @@ function Show-Help {
     phpvm uninstall <version>      Remove a PHP version
     phpvm which                    Path to active php.exe
     phpvm ini                      Open active php.ini in Notepad
+
+  COMPOSER
+    phpvm composer                 Install Composer for active PHP version
+
+  LARAVEL QUICK SETUP
+    phpvm ext laravel              Enable all Laravel extensions (full)
+    phpvm ext laravel minimal      Required extensions only
+    phpvm ext laravel full         Required + recommended + Redis
 
   EXTENSION MANAGEMENT
     phpvm ext list                 Show all bundled extensions
@@ -604,6 +871,7 @@ function Show-Help {
 #  ENTRY POINT
 # ==============================================================================
 Initialize-PHPVM
+Check-PHPVMUpdate
 
 switch ($Command.ToLower()) {
     "install"                       { Invoke-Install   $SubOrVer }
@@ -614,6 +882,7 @@ switch ($Command.ToLower()) {
     "which"                         { Invoke-Which }
     "ini"                           { Invoke-Ini }
     "ext"                           { Invoke-Ext $SubOrVer $Arg2 }
+    "composer"                      { Invoke-Composer }
     { $_ -in "version", "-v" }      { Write-Ok "phpvm $PHPVM_VERSION" }
     { $_ -in "help", "--help" }     { Show-Help }
     default                         { Show-Help }

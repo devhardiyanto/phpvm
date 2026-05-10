@@ -10,12 +10,15 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.0.0"
+PHPVM_VERSION="1.3.0"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
 PHPVM_CACHE="$PHPVM_DIR/cache"
 PHPVM_LOG="$PHPVM_DIR/build.log"
+PHPVM_UPDATE_URL="https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/version.txt"
+PHPVM_LAST_CHECK="$PHPVM_DIR/.last_update_check"
+PHPVM_CHECK_INTERVAL=86400  # 24 hours
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 _ok()   { echo -e "  \033[32m$*\033[0m"; }
@@ -24,7 +27,50 @@ _step() { echo -e "  \033[36m> $*\033[0m"; }
 _warn() { echo -e "  \033[33m[warn] $*\033[0m"; }
 _dim()  { echo -e "  \033[90m$*\033[0m"; }
 
-# ── Init ──────────────────────────────────────────────────────────────────────
+# ── Update checker (once per day, via version.txt) ───────────────────────────
+_phpvm_check_update() {
+    # Skip in CI or if explicitly disabled
+    [[ -n "${CI:-}" || -n "${PHPVM_NO_UPDATE_CHECK:-}" ]] && return
+
+    # Only check once per day
+    if [[ -f "$PHPVM_LAST_CHECK" ]]; then
+        local last_ts now elapsed
+        last_ts=$(date -r "$PHPVM_LAST_CHECK" +%s 2>/dev/null || \
+                  stat -c %Y "$PHPVM_LAST_CHECK" 2>/dev/null || echo 0)
+        now=$(date +%s)
+        elapsed=$(( now - last_ts ))
+        [[ $elapsed -lt $PHPVM_CHECK_INTERVAL ]] && return
+    fi
+
+    # Update timestamp first
+    touch "$PHPVM_LAST_CHECK" 2>/dev/null || return
+
+    # Fetch latest version (3s timeout, silent)
+    local latest
+    if command -v curl &>/dev/null; then
+        latest=$(curl -fsSL --max-time 3 "$PHPVM_UPDATE_URL" 2>/dev/null | tr -d '[:space:]')
+    elif command -v wget &>/dev/null; then
+        latest=$(wget -qO- --timeout=3 "$PHPVM_UPDATE_URL" 2>/dev/null | tr -d '[:space:]')
+    else
+        return
+    fi
+
+    [[ -z "$latest" ]] && return
+
+    # Compare versions (sort -V = version sort)
+    local newer
+    newer=$(printf '%s\n%s' "$PHPVM_VERSION" "$latest" | sort -V | tail -1)
+    if [[ "$newer" != "$PHPVM_VERSION" || "$latest" != "$PHPVM_VERSION" && "$newer" == "$latest" ]]; then
+        echo ""
+        echo -e "  \033[33m┌─────────────────────────────────────────────────────┐\033[0m"
+        echo -e "  \033[33m│  phpvm update available: $PHPVM_VERSION → $latest              \033[0m"
+        echo -e "  \033[33m│  Run: curl -fsSL .../linux/install.sh | bash         │\033[0m"
+        echo -e "  \033[33m└─────────────────────────────────────────────────────┘\033[0m"
+        echo ""
+    fi
+}
+
+
 _phpvm_init() {
     mkdir -p "$PHPVM_VERSIONS" "$PHPVM_CACHE"
 }
@@ -571,6 +617,7 @@ EOF
 # ==============================================================================
 phpvm() {
     _phpvm_init
+    _phpvm_check_update
 
     local cmd="${1:-help}"
     shift || true
