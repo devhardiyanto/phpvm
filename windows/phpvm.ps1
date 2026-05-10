@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-$PHPVM_VERSION = "1.4.0"
+$PHPVM_VERSION = "1.4.1"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -112,12 +112,10 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
         default        { Get-VSVersion $version }  # fallback: derive from version number
     }
 
-    # ExtDir: ask PHP first, fallback to <php_root>\ext
+    # ExtDir: always derive from PHP exe location — don't trust php.ini
+    # which may still point to a system PHP (e.g. C:\php\ext)
     $phpRoot = Split-Path $phpExe -Parent
-    $extDir  = Invoke-PHP $phpExe "echo ini_get('extension_dir');"
-    if (-not $extDir -or $extDir -eq "") { $extDir = "$phpRoot\ext" }
-    # Resolve relative path (PHP sometimes returns "ext" not full path)
-    if (-not [System.IO.Path]::IsPathRooted($extDir)) { $extDir = "$phpRoot\$extDir" }
+    $extDir  = "$phpRoot\ext"
 
     $iniPath = Invoke-PHP $phpExe "echo php_ini_loaded_file();"
 
@@ -252,6 +250,16 @@ function Invoke-Install ([string]$ver) {
         $src = @("$targetDir\php.ini-development", "$targetDir\php.ini-production") |
                Where-Object { Test-Path $_ } | Select-Object -First 1
         if ($src) { Copy-Item $src "$targetDir\php.ini" }
+    }
+
+    # Fix extension_dir in php.ini to point to THIS version's ext folder
+    $ini = "$targetDir\php.ini"
+    if (Test-Path $ini) {
+        $content = Get-Content $ini -Raw
+        # Replace commented or wrong extension_dir with correct absolute path
+        $extPath = "$targetDir\ext"
+        $content = $content -replace '(?m)^;?\s*extension_dir\s*=.*$', "extension_dir = `"$extPath`""
+        $content | Set-Content $ini -NoNewline
     }
 
     Write-Ok "PHP $ver installed successfully."
@@ -894,7 +902,36 @@ function Show-Help {
 "@ -ForegroundColor Cyan
 }
 
-function Invoke-Upgrade {
+function Invoke-FixIni {
+    $cur = Get-CurrentVersion
+    if (-not $cur) { Write-Err "No active PHP version. Run: phpvm use <version>"; return }
+
+    $targetDir = "$VERSIONS_DIR\$cur"
+    $ini       = "$targetDir\php.ini"
+    $extPath   = "$targetDir\ext"
+
+    if (-not (Test-Path $ini)) { Write-Err "php.ini not found: $ini"; return }
+
+    $before  = Get-Content $ini -Raw
+    $content = $before -replace '(?m)^;?\s*extension_dir\s*=.*$', "extension_dir = `"$extPath`""
+
+    if ($content -eq $before) {
+        Write-Warn "extension_dir already correct or not found in php.ini."
+    } else {
+        $content | Set-Content $ini -NoNewline
+        Write-Ok "Fixed extension_dir -> $extPath"
+    }
+
+    # Also ensure extension_dir line exists if it was missing entirely
+    if ($content -notmatch 'extension_dir\s*=') {
+        Add-Content $ini "`nextension_dir = `"$extPath`""
+        Write-Ok "Added extension_dir -> $extPath"
+    }
+
+    Write-Dim "Verify: phpvm ext list"
+}
+
+
     $scriptUrl  = "https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/windows/phpvm.ps1"
     $versionUrl = "https://raw.githubusercontent.com/YOUR_USERNAME/phpvm/main/version.txt"
     $scriptDest = "$PHPVM_DIR\phpvm.ps1"
@@ -945,6 +982,7 @@ switch ($Command.ToLower()) {
     { $_ -in "uninstall", "remove" }{ Invoke-Uninstall $SubOrVer }
     "which"                         { Invoke-Which }
     "ini"                           { Invoke-Ini }
+    "fix-ini"                       { Invoke-FixIni }
     "ext"                           { Invoke-Ext $SubOrVer $Arg2 }
     "composer"                      { Invoke-Composer }
     { $_ -in "upgrade", "update" }  { Invoke-Upgrade }
