@@ -7,7 +7,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$PHPVM_VERSION = "1.0.0"
+$PHPVM_VERSION = "1.4.2"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $PHPVM_BIN     = "$PHPVM_DIR\bin"
 
@@ -55,7 +55,8 @@ $psShim | Set-Content "$PHPVM_BIN\phpvm.ps1" -Encoding UTF8
 Write-Ok "Created PS shim      -> $PHPVM_BIN\phpvm.ps1"
 
 # 5. Add PHPVM_BIN to user PATH (idempotent)
-$userPath = [Environment]::GetEnvironmentVariable("PATH", "User") ?? ""
+$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+if ($null -eq $userPath) { $userPath = "" }
 if ($userPath -notlike "*$PHPVM_BIN*") {
     $newPath = "$PHPVM_BIN;$userPath" -replace ";{2,}", ";"
     [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")

@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-$PHPVM_VERSION = "1.4.1"
+$PHPVM_VERSION = "1.4.2"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -276,12 +276,17 @@ function Invoke-Use ([string]$ver) {
         Write-Err "PHP $ver is not installed. Run: phpvm install $ver"
         return
     }
+    if (-not (Test-Path "$targetDir\php.exe")) {
+        Write-Err "Invalid PHP $ver install: missing $targetDir\php.exe"
+        return
+    }
 
     Remove-Junction $CURRENT_LINK
     cmd /c mklink /J `"$CURRENT_LINK`" `"$targetDir`" | Out-Null
 
     # Persist CURRENT_LINK in user PATH (idempotent)
-    $userPath = [Environment]::GetEnvironmentVariable("PATH", "User") ?? ""
+    $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($null -eq $userPath) { $userPath = "" }
     $parts    = $userPath -split ";" | Where-Object { $_ -and $_ -ne $CURRENT_LINK }
     $newPath  = (@($CURRENT_LINK) + $parts -join ";") -replace ";{2,}", ";"
     [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")

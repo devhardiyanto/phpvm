@@ -6,7 +6,7 @@
 
 set -e
 
-PHPVM_VERSION="1.0.0"
+PHPVM_VERSION="1.4.2"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_REPO="https://raw.githubusercontent.com/devhardiyanto/phpvm/main"
 
@@ -40,9 +40,11 @@ _ok "Downloaded -> $PHPVM_DIR/phpvm.sh"
 # 3. Add source line to shell rc files
 _phpvm_add_to_rc() {
     local rc_file="$1"
-    local source_line="# phpvm"$'\n'"[ -f \"\$HOME/.phpvm/phpvm.sh\" ] && source \"\$HOME/.phpvm/phpvm.sh\""
+    local escaped_dir="${PHPVM_DIR//\\/\\\\}"
+    escaped_dir="${escaped_dir//\"/\\\"}"
+    local source_line="# phpvm"$'\n'"[ -f \"$escaped_dir/phpvm.sh\" ] && source \"$escaped_dir/phpvm.sh\""
 
-    if [[ -f "$rc_file" ]] && grep -q "phpvm" "$rc_file"; then
+    if [[ -f "$rc_file" ]] && grep -Fq "$PHPVM_DIR/phpvm.sh" "$rc_file"; then
         _warn "phpvm already in $rc_file, skipping."
     elif [[ -f "$rc_file" ]] || [[ "$rc_file" == "$HOME/.bashrc" ]]; then
         echo "" >> "$rc_file"
