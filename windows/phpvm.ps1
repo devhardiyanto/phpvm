@@ -1,5 +1,5 @@
 # ==============================================================================
-#  phpvm.ps1 — PHP Version Manager for Windows
+#  phpvm.ps1 - PHP Version Manager for Windows
 #  Compatible with: CMD (via phpvm.cmd shim) and PowerShell
 #  Repo: https://github.com/devhardiyanto/phpvm
 # ==============================================================================
@@ -13,14 +13,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-$PHPVM_VERSION = "1.4.2"
+# -- Constants -----------------------------------------------------------------
+$PHPVM_VERSION = "1.4.3"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
 $PHPVM_BIN     = "$PHPVM_DIR\bin"
 
-# ── Update checker (once per day, via version.txt) ───────────────────────────
+# -- Update checker (once per day, via version.txt) ---------------------------
 $PHPVM_UPDATE_URL   = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
 $PHPVM_LAST_CHECK   = "$PHPVM_DIR\.last_update_check"
 $PHPVM_CHECK_INTERVAL = 86400  # 24 hours in seconds
@@ -51,14 +51,14 @@ function Check-PHPVMUpdate {
 
         if ($remote -gt $current) {
             Write-Host ""
-            Write-Host "  ┌─────────────────────────────────────────────────┐" -ForegroundColor Yellow
-            Write-Host "  │  phpvm update available: $PHPVM_VERSION → $latest" -ForegroundColor Yellow
-            Write-Host "  │  Get it: https://github.com/devhardiyanto/phpvm  │" -ForegroundColor Yellow
-            Write-Host "  └─────────────────────────────────────────────────┘" -ForegroundColor Yellow
+            Write-Host "  +-------------------------------------------------+" -ForegroundColor Yellow
+            Write-Host "  |  phpvm update available: $PHPVM_VERSION -> $latest" -ForegroundColor Yellow
+            Write-Host "  |  Get it: https://github.com/devhardiyanto/phpvm  |" -ForegroundColor Yellow
+            Write-Host "  +-------------------------------------------------+" -ForegroundColor Yellow
             Write-Host ""
         }
     } catch {
-        # Silently ignore — no internet, timeout, etc.
+        return
     }
 }
 
@@ -69,9 +69,9 @@ function Write-Step ($m) { Write-Host "  > $m" -ForegroundColor Cyan   }
 function Write-Warn ($m) { Write-Host "  [warn] $m" -ForegroundColor Yellow }
 function Write-Dim  ($m) { Write-Host "  $m" -ForegroundColor DarkGray }
 
-# ── Init ──────────────────────────────────────────────────────────────────────
+# -- Init ----------------------------------------------------------------------
 function Initialize-PHPVM {
-    # Force TLS 1.2 — GitHub blocks older TLS versions
+    # Force TLS 1.2 - GitHub blocks older TLS versions
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     foreach ($d in @($PHPVM_DIR, $VERSIONS_DIR, $PHPVM_BIN)) {
         if (-not (Test-Path $d)) {
@@ -80,7 +80,7 @@ function Initialize-PHPVM {
     }
 }
 
-# ── PHP build metadata ────────────────────────────────────────────────────────
+# -- PHP build metadata --------------------------------------------------------
 # Helper: run php -r and strip any Warning/Notice lines from output
 function Invoke-PHP ([string]$exe, [string]$code) {
     $out = & $exe -r $code 2>$null
@@ -95,7 +95,7 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
         else { throw "No active PHP version. Run: phpvm use <version>" }
     }
 
-    # php -i also leaks warnings to stdout on some Windows builds — filter them too
+    # php -i also leaks warnings to stdout on some Windows builds - filter them too
     $raw  = (& $phpExe -i 2>$null) | Where-Object { $_ -notmatch "^(PHP )?(Warning|Notice|Deprecated)" }
 
     $version = Invoke-PHP $phpExe "echo PHP_VERSION;"
@@ -114,7 +114,7 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
         default        { Get-VSVersion $version }  # fallback: derive from version number
     }
 
-    # ExtDir: always derive from PHP exe location — don't trust php.ini
+    # ExtDir: always derive from PHP exe location - don't trust php.ini
     # which may still point to a system PHP (e.g. C:\php\ext)
     $phpRoot = Split-Path $phpExe -Parent
     $extDir  = "$phpRoot\ext"
@@ -135,11 +135,11 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
 }
 
 
-# ── Resolve PHP download URL ──────────────────────────────────────────────────
+# -- Resolve PHP download URL --------------------------------------------------
 # VS version mapping (based on windows.php.net actual filenames):
-#   PHP 7.x        → vc15
-#   PHP 8.0 - 8.3  → vs16
-#   PHP 8.4+       → vs17
+#   PHP 7.x        -> vc15
+#   PHP 8.0 - 8.3  -> vs16
+#   PHP 8.4+       -> vs17
 function Get-VSVersion ([string]$ver) {
     $major = [int]($ver -split '\.')[0]
     $minor = [int]($ver -split '\.')[1]
@@ -164,12 +164,14 @@ function Resolve-PHPURL ([string]$ver) {
             $res = $req.GetResponse()
             $res.Close()
             return $url
-        } catch { }
+        } catch {
+            continue
+        }
     }
     return $null
 }
 
-# ── Junction helpers ──────────────────────────────────────────────────────────
+# -- Junction helpers ----------------------------------------------------------
 function Get-CurrentVersion {
     if (-not (Test-Path $CURRENT_LINK)) { return $null }
     $item = Get-Item $CURRENT_LINK -Force
@@ -190,7 +192,7 @@ function Remove-Junction ([string]$path) {
     }
 }
 
-# ── Download helper ───────────────────────────────────────────────────────────
+# -- Download helper -----------------------------------------------------------
 function Invoke-Download ([string]$url, [string]$dest) {
     $ProgressPreference = "SilentlyContinue"
     Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
@@ -295,7 +297,11 @@ function Invoke-Use ([string]$ver) {
     if ($env:PATH -notlike "*$CURRENT_LINK*") { $env:PATH = "$CURRENT_LINK;$env:PATH" }
 
     Write-Ok "Now using PHP $ver"
-    try { & "$CURRENT_LINK\php.exe" --version 2>$null } catch {}
+    try {
+        & "$CURRENT_LINK\php.exe" --version 2>$null
+    } catch {
+        return
+    }
     Write-Warn "Restart your terminal if 'php -v' still shows the previous version."
 }
 
@@ -324,7 +330,11 @@ function Invoke-Current {
     if ($cur) {
         Write-Host ""
         Write-Host "  Active: $cur" -ForegroundColor Green
-        try { & "$CURRENT_LINK\php.exe" --version 2>$null } catch {}
+        try {
+            & "$CURRENT_LINK\php.exe" --version 2>$null
+        } catch {
+            return
+        }
         Write-Host ""
     } else {
         Write-Warn "No PHP version active. Run: phpvm use <version>"
@@ -380,7 +390,7 @@ function Ext-List {
     $dlls   = Get-ChildItem $info.ExtDir -Filter "php_*.dll" | Sort-Object Name
 
     Write-Host "  EXTENSION             STATUS" -ForegroundColor Yellow
-    Write-Host "  ─────────────────────────────"
+    Write-Host "  -----------------------------"
     foreach ($dll in $dlls) {
         $name = $dll.BaseName -replace '^php_', ''
         $on   = $loaded -contains $name.ToLower()
@@ -396,7 +406,7 @@ function Ext-List {
 function Ext-Loaded {
     $info = Get-PHPBuildInfo
     Write-Host ""
-    Write-Host "  Loaded extensions — PHP $($info.Version):" -ForegroundColor Cyan
+    Write-Host "  Loaded extensions - PHP $($info.Version):" -ForegroundColor Cyan
     & $info.Exe -m 2>$null | Where-Object { $_ -notmatch '^\[' } | Sort-Object |
         ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
     Write-Host ""
@@ -609,7 +619,9 @@ function Ext-Info ([string]$extName) {
 if (extension_loaded('$extName')) {
     `$r = new ReflectionExtension('$extName');
     echo 'Name    : ' . `$r->getName() . PHP_EOL;
-    echo 'Version : ' . (`$r->getVersion() ?? 'n/a') . PHP_EOL;
+    `$version = `$r->getVersion();
+    if (`$version -eq `$null) { `$version = 'n/a'; }
+    echo 'Version : ' . `$version . PHP_EOL;
     `$classes = `$r->getClassNames();
     if (`$classes) echo 'Classes : ' . implode(', ', `$classes) . PHP_EOL;
 } else {
@@ -644,7 +656,7 @@ function Ext-Laravel ([string]$preset = "full") {
         "intl"          # internationalisation, number/date formatting
         "gd"            # image manipulation (resize, thumbnail)
         "exif"          # read EXIF metadata from photos
-        "opcache"       # bytecode cache — required in production
+        "opcache"       # bytecode cache - required in production
         "pdo_pgsql"     # PostgreSQL driver
         "pgsql"         # PostgreSQL native functions
         "sockets"       # Laravel Reverb / WebSocket / queue worker
@@ -663,14 +675,14 @@ function Ext-Laravel ([string]$preset = "full") {
         $peclList   += $peclFull
     }
 
-    # ── Banner ────────────────────────────────────────────────
+    # -- Banner ------------------------------------------------
     $label = if ($preset -eq "minimal") { "minimal" } else { "full" }
     Write-Host ""
-    Write-Host "  Laravel extension setup ($label) — PHP $($info.Version)" -ForegroundColor Cyan
-    Write-Host "  ─────────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "  Laravel extension setup ($label) - PHP $($info.Version)" -ForegroundColor Cyan
+    Write-Host "  -----------------------------------------------------" -ForegroundColor DarkGray
     Write-Host ""
 
-    # ── Step 1: Enable bundled extensions ────────────────────
+    # -- Step 1: Enable bundled extensions --------------------
     Write-Host "  [1/2] Enabling bundled extensions ..." -ForegroundColor Yellow
     $extDir = $info.ExtDir
 
@@ -691,7 +703,7 @@ function Ext-Laravel ([string]$preset = "full") {
         }
     }
 
-    # ── Step 2: PECL extensions ───────────────────────────────
+    # -- Step 2: PECL extensions -------------------------------
     if ($peclList.Count -gt 0) {
         Write-Host ""
         Write-Host "  [2/2] Installing PECL extensions ..." -ForegroundColor Yellow
@@ -712,7 +724,7 @@ function Ext-Laravel ([string]$preset = "full") {
         }
     }
 
-    # ── Summary ───────────────────────────────────────────────
+    # -- Summary -----------------------------------------------
     Write-Host ""
     Write-Ok "Done! Restart your terminal then verify with: php -m"
     Write-Host ""
@@ -753,8 +765,8 @@ function Invoke-Ext ([string]$sub, [string]$name) {
 function Show-ExtHelp {
     Write-Host @"
 
-  phpvm ext — Extension Manager
-  ─────────────────────────────────────────────────────────
+  phpvm ext - Extension Manager
+  ---------------------------------------------------------
 
   phpvm ext list                   Bundled extensions (ON/OFF)
   phpvm ext loaded                 Loaded extensions (php -m)
@@ -787,7 +799,7 @@ function Invoke-Composer {
         Write-Warn "openssl enabled. If Composer install fails, restart terminal first then re-run 'phpvm composer'."
     }
 
-    # 2. Determine install location — PHP version dir so each version has its own composer
+    # 2. Determine install location - PHP version dir so each version has its own composer
     $phpRoot    = Split-Path $info.Exe -Parent
     $composerPhar = "$phpRoot\composer.phar"
     $composerBat  = "$phpRoot\composer.bat"
@@ -823,7 +835,7 @@ function Invoke-Composer {
     }
     Write-Ok "Hash verified."
 
-    # 5. Run installer — outputs composer.phar to current dir, move to PHP root
+    # 5. Run installer - outputs composer.phar to current dir, move to PHP root
     Write-Step "Installing Composer ..."
     Push-Location $phpRoot
     & $info.Exe $installerFile --quiet
@@ -856,8 +868,8 @@ php "%~dp0composer.phar" %*
 function Show-Help {
     Write-Host @"
 
-  phpvm $PHPVM_VERSION — PHP Version Manager for Windows
-  ─────────────────────────────────────────────────────────
+  phpvm $PHPVM_VERSION - PHP Version Manager for Windows
+  ---------------------------------------------------------
 
   VERSION MANAGEMENT
     phpvm install   <version>      Download & install a PHP version
@@ -952,7 +964,7 @@ function Invoke-Upgrade {
         return
     }
 
-    Write-Step "Upgrading phpvm $PHPVM_VERSION → $latest ..."
+    Write-Step "Upgrading phpvm $PHPVM_VERSION -> $latest ..."
 
     # Backup current script
     $backup = "$PHPVM_DIR\phpvm.ps1.bak"

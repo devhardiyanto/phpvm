@@ -1,5 +1,5 @@
 # ==============================================================================
-#  install.ps1 — phpvm installer for Windows
+#  install.ps1 - phpvm installer for Windows
 #  Run as normal user (no admin required)
 #  Usage: .\install.ps1
 # ==============================================================================
@@ -7,7 +7,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$PHPVM_VERSION = "1.4.2"
+$PHPVM_VERSION = "1.4.3"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $PHPVM_BIN     = "$PHPVM_DIR\bin"
 
@@ -16,8 +16,8 @@ function Write-Step ($m) { Write-Host "  > $m" -ForegroundColor Cyan   }
 function Write-Warn ($m) { Write-Host "  [warn] $m" -ForegroundColor Yellow }
 
 Write-Host ""
-Write-Host "  phpvm $PHPVM_VERSION — PHP Version Manager for Windows" -ForegroundColor Cyan
-Write-Host "  ──────────────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host "  phpvm $PHPVM_VERSION - PHP Version Manager for Windows" -ForegroundColor Cyan
+Write-Host "  ------------------------------------------------------" -ForegroundColor DarkGray
 Write-Host ""
 
 # 1. Create directories
@@ -36,7 +36,7 @@ Copy-Item $scriptSrc "$PHPVM_DIR\phpvm.ps1" -Force
 Unblock-File "$PHPVM_DIR\phpvm.ps1"
 Write-Ok "Copied phpvm.ps1 -> $PHPVM_DIR\phpvm.ps1"
 
-# 3. Create CMD launcher (phpvm.cmd) — works in CMD and PowerShell
+# 3. Create CMD launcher (phpvm.cmd) - works in CMD and PowerShell
 $cmdLauncher = '@echo off
 powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.phpvm\phpvm.ps1" %*'
 
@@ -49,7 +49,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File `"$PHPVM_DIR\phpvm.ps1`" %*"
 $cmdLauncher | Set-Content "$PHPVM_BIN\phpvm.cmd" -Encoding ASCII
 Write-Ok "Created CMD launcher -> $PHPVM_BIN\phpvm.cmd"
 
-# 4. Create PS1 shim — PowerShell prefers .ps1 over .cmd in same folder
+# 4. Create PS1 shim - PowerShell prefers .ps1 over .cmd in same folder
 $psShim = "& `"$PHPVM_DIR\phpvm.ps1`" @args"
 $psShim | Set-Content "$PHPVM_BIN\phpvm.ps1" -Encoding UTF8
 Write-Ok "Created PS shim      -> $PHPVM_BIN\phpvm.ps1"
@@ -74,7 +74,7 @@ if ($policy -in @("Restricted", "Undefined")) {
 
 # Done
 Write-Host ""
-Write-Host "  ✓ phpvm installed successfully!" -ForegroundColor Green
+Write-Host "  OK phpvm installed successfully!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Restart your terminal, then:" -ForegroundColor Cyan
 Write-Host "    phpvm install 8.3.0"
