@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.4.1"
+PHPVM_VERSION="1.4.2"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -60,7 +60,7 @@ _phpvm_check_update() {
     # Compare versions (sort -V = version sort)
     local newer
     newer=$(printf '%s\n%s' "$PHPVM_VERSION" "$latest" | sort -V | tail -1)
-    if [[ "$newer" != "$PHPVM_VERSION" || "$latest" != "$PHPVM_VERSION" && "$newer" == "$latest" ]]; then
+    if [[ "$newer" == "$latest" && "$latest" != "$PHPVM_VERSION" ]]; then
         echo ""
         echo -e "  \033[33m┌─────────────────────────────────────────────────────┐\033[0m"
         echo -e "  \033[33m│  phpvm update available: $PHPVM_VERSION → $latest              \033[0m"
@@ -109,8 +109,6 @@ _phpvm_detect_os() {
 _phpvm_check_deps() {
     local missing=()
     local tools=("gcc" "make" "autoconf" "bison" "re2c" "pkg-config")
-    local libs=("libxml2" "libsqlite3" "libssl" "libcurl" "libonig" "libzip")
-
     for tool in "${tools[@]}"; do
         command -v "$tool" &>/dev/null || missing+=("$tool")
     done
@@ -258,7 +256,11 @@ phpvm_install() {
         "--with-onig"
     )
 
-    cd "$src_dir"
+    cd "$src_dir" || {
+        _err "Could not enter source directory: $src_dir"
+        rm -rf "$target"
+        return 1
+    }
     ./buildconf --force &>>"$PHPVM_LOG" 2>&1 || true  # needed only for git checkouts
     ./configure "${configure_opts[@]}" >> "$PHPVM_LOG" 2>&1 || {
         _err "Configure failed. See log: $PHPVM_LOG"
@@ -310,6 +312,10 @@ phpvm_use() {
     local target="$PHPVM_VERSIONS/$ver"
     if [[ ! -d "$target" ]]; then
         _err "PHP $ver is not installed. Run: phpvm install $ver"
+        return 1
+    fi
+    if [[ ! -x "$target/bin/php" ]]; then
+        _err "Invalid PHP $ver install: missing executable $target/bin/php"
         return 1
     fi
 
@@ -392,7 +398,11 @@ phpvm_uninstall() {
 #  phpvm which
 # ==============================================================================
 phpvm_which() {
-    command -v php &>/dev/null && _ok "$(command -v php)" || _warn "php not in PATH"
+    if command -v php &>/dev/null; then
+        _ok "$(command -v php)"
+    else
+        _warn "php not in PATH"
+    fi
 }
 
 # ==============================================================================
@@ -449,10 +459,16 @@ phpvm_ext_install() {
     local ver="${2:-}"
     if [[ -n "$ver" ]]; then
         _step "Installing $name-$ver via PECL ..."
-        pecl install "$name-$ver"
+        pecl install "$name-$ver" || {
+            _err "Failed to install $name-$ver via PECL."
+            return 1
+        }
     else
         _step "Installing $name via PECL ..."
-        pecl install "$name"
+        pecl install "$name" || {
+            _err "Failed to install $name via PECL."
+            return 1
+        }
     fi
 
     _ok "Done. Enable with: phpvm ext enable $name"
@@ -466,10 +482,33 @@ phpvm_ext_enable() {
     cur=$(_phpvm_current_version)
     [[ -z "$cur" ]] && { _err "No active PHP version."; return 1; }
 
+    local php_bin="$PHPVM_VERSIONS/$cur/bin/php"
+    [[ ! -x "$php_bin" ]] && { _err "Invalid PHP $cur install: missing executable $php_bin"; return 1; }
+
     local conf_dir="$PHPVM_VERSIONS/$cur/etc/conf.d"
     local ini_file="$conf_dir/$name.ini"
 
     mkdir -p "$conf_dir"
+
+    if "$php_bin" -r "exit(extension_loaded('$name') ? 0 : 1);" 2>/dev/null; then
+        _warn "$name is already loaded."
+        return 0
+    fi
+
+    local ext_dir ext_path=""
+    ext_dir=$("$php_bin" -r "echo ini_get('extension_dir');" 2>/dev/null)
+    for candidate in "$ext_dir/$name.so" "$ext_dir/php_$name.so"; do
+        if [[ -f "$candidate" ]]; then
+            ext_path="$candidate"
+            break
+        fi
+    done
+
+    if [[ -z "$ext_path" ]]; then
+        _err "Extension not found in PHP extension_dir: $name"
+        _dim "Install it first: phpvm ext install $name"
+        return 1
+    fi
 
     if [[ -f "$ini_file" ]]; then
         _warn "$name.ini already exists in conf.d."
