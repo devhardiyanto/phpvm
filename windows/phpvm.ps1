@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.4.3"
+$PHPVM_VERSION = "1.4.4"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -198,6 +198,21 @@ function Invoke-Download ([string]$url, [string]$dest) {
     Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
 }
 
+
+function Unblock-PHPVMPath ([string]$path) {
+    if (-not (Test-Path $path)) { return }
+
+    try {
+        Unblock-File -Path $path -ErrorAction SilentlyContinue
+        if (Test-Path $path -PathType Container) {
+            Get-ChildItem -Path $path -Recurse -Force -ErrorAction SilentlyContinue |
+                Unblock-File -ErrorAction SilentlyContinue
+        }
+    } catch {
+        return
+    }
+}
+
 function Test-URLExists ([string]$url) {
     try {
         $req = [System.Net.WebRequest]::Create($url)
@@ -244,9 +259,12 @@ function Invoke-Install ([string]$ver) {
     try { Invoke-Download $url $tempFile }
     catch { Write-Err "Download failed: $_"; return }
 
+    Unblock-PHPVMPath $tempFile
+
     Write-Step "Extracting ..."
     New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
     Expand-Archive -Path $tempFile -DestinationPath $targetDir -Force
+    Unblock-PHPVMPath $targetDir
     Remove-Item $tempFile -Force
 
     # Bootstrap php.ini from template
@@ -282,6 +300,8 @@ function Invoke-Use ([string]$ver) {
         Write-Err "Invalid PHP $ver install: missing $targetDir\php.exe"
         return
     }
+
+    Unblock-PHPVMPath $targetDir
 
     Remove-Junction $CURRENT_LINK
     cmd /c mklink /J `"$CURRENT_LINK`" `"$targetDir`" | Out-Null
@@ -414,6 +434,8 @@ function Ext-Loaded {
 
 function Edit-IniExtension ([string]$extName, [bool]$enable) {
     $info    = Get-PHPBuildInfo
+    $phpRoot = Split-Path $info.Exe -Parent
+    Unblock-PHPVMPath $phpRoot
     $iniPath = $info.IniPath
 
     if (-not $iniPath -or -not (Test-Path $iniPath)) {
@@ -518,14 +540,18 @@ function Install-PECLExt ([string]$extName, [string]$requestedVer = "") {
     Write-Step "Downloading $foundZip ..."
     Invoke-Download $foundUrl $tempZip
 
+    Unblock-PHPVMPath $tempZip
+
     Write-Step "Extracting ..."
     if (Test-Path $tempExtract) { Remove-Item $tempExtract -Recurse -Force }
     Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
+    Unblock-PHPVMPath $tempExtract
 
     $dll = Get-ChildItem $tempExtract -Filter "php_$extName.dll" -Recurse | Select-Object -First 1
     if (-not $dll) { Write-Err "php_$extName.dll not found in archive."; return }
 
     Copy-Item $dll.FullName $dllDest -Force
+    Unblock-PHPVMPath $dllDest
     Write-Ok "Installed: php_$extName.dll"
 
     # Copy dependency DLLs to PHP root
@@ -536,6 +562,7 @@ function Install-PECLExt ([string]$extName, [string]$requestedVer = "") {
             $dep = "$phpRoot\$($_.Name)"
             if (-not (Test-Path $dep)) {
                 Copy-Item $_.FullName $dep -Force
+                Unblock-PHPVMPath $dep
                 Write-Dim "Dependency: $($_.Name) -> PHP root"
             }
         }
@@ -586,7 +613,9 @@ function Install-XDebug {
     Write-Step "Downloading XDebug $xdVer ..."
     $tempDll = "$env:TEMP\$dllName"
     Invoke-Download $url $tempDll
+    Unblock-PHPVMPath $tempDll
     Copy-Item $tempDll $dllDest -Force
+    Unblock-PHPVMPath $dllDest
     Remove-Item $tempDll -Force
 
     # Append xdebug block to php.ini if not already present
@@ -924,6 +953,8 @@ function Invoke-FixIni {
     $extPath   = "$targetDir\ext"
 
     if (-not (Test-Path $ini)) { Write-Err "php.ini not found: $ini"; return }
+
+    Unblock-PHPVMPath $targetDir
 
     $before  = Get-Content $ini -Raw
     $content = $before -replace '(?m)^;?\s*extension_dir\s*=.*$', "extension_dir = `"$extPath`""
