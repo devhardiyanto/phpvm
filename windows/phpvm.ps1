@@ -164,7 +164,8 @@ function Resolve-PHPURL ([string]$ver) {
 function Resolve-LatestPatch ([string]$majorMinor) {
     $patches = @()
     $escaped = [regex]::Escape($majorMinor)
-    $pattern = "php-($escaped\.\d+)-(?:nts-)?Win32-(?:vs1[567]|vc15)-x64\.zip"
+    # (?i) - older 7.x archives use uppercase VC15; newer 8.x use lowercase vs16/vs17.
+    $pattern = "(?i)php-($escaped\.\d+)-(?:nts-)?Win32-(?:vs1[567]|vc15)-x64\.zip"
 
     foreach ($index in @(
         "https://windows.php.net/downloads/releases/"

@@ -67,6 +67,17 @@ Describe 'Resolve-LatestPatch' {
         Mock -CommandName Get-WebString -MockWith { '<html>empty</html>' }
         Resolve-LatestPatch '8.9' | Should -BeNullOrEmpty
     }
+
+    It 'Matches uppercase VC15 used by PHP 7.x archives' {
+        Mock -CommandName Get-WebString -MockWith {
+            @'
+<a href="php-7.3.0-Win32-VC15-x64.zip">...</a>
+<a href="php-7.3.33-Win32-VC15-x64.zip">...</a>
+<a href="php-7.3.33-nts-Win32-VC15-x64.zip">...</a>
+'@
+        }
+        Resolve-LatestPatch '7.3' | Should -Be '7.3.33'
+    }
 }
 
 Describe 'Get-PHPZipHash' {
