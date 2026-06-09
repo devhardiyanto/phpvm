@@ -6,7 +6,7 @@
 
 set -e
 
-PHPVM_VERSION="1.4.5"
+PHPVM_VERSION="1.4.6"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_REPO="https://raw.githubusercontent.com/devhardiyanto/phpvm/main"
 
