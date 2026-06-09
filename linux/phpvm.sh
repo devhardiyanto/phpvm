@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.6.5"
+PHPVM_VERSION="1.7.0"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -671,6 +671,91 @@ if (extension_loaded('$name')) {
     echo ""
 }
 
+phpvm_ext_laravel() {
+    local preset="${1:-full}"
+    case "$preset" in min|minimal) preset="minimal" ;; *) preset="full" ;; esac
+
+    local cur
+    cur=$(_phpvm_current_version)
+    [[ -z "$cur" ]] && { _err "No active PHP version."; return 1; }
+
+    local php_bin="$PHPVM_VERSIONS/$cur/bin/php"
+    [[ ! -x "$php_bin" ]] && { _err "php binary not found: $php_bin"; return 1; }
+
+    local minimal=(openssl pdo pdo_mysql pdo_sqlite mbstring tokenizer xml ctype fileinfo bcmath curl zip sodium)
+    local extra=(intl gd exif opcache pdo_pgsql pgsql sockets)
+    local pecl=(redis)
+
+    local enable_list=("${minimal[@]}")
+    local pecl_list=()
+    if [[ "$preset" != "minimal" ]]; then
+        enable_list+=("${extra[@]}")
+        pecl_list+=("${pecl[@]}")
+    fi
+
+    echo ""
+    echo -e "  \033[36mLaravel extension setup ($preset) — PHP $cur\033[0m"
+    echo -e "  \033[90m─────────────────────────────────────────────────\033[0m"
+    echo ""
+
+    local loaded
+    loaded=$("$php_bin" -m 2>/dev/null | tr '[:upper:]' '[:lower:]')
+
+    local ext_dir
+    ext_dir=$("$php_bin" -r "echo ini_get('extension_dir');" 2>/dev/null)
+
+    echo -e "  \033[33m[1/2] Enabling bundled extensions ...\033[0m"
+    for ext in "${enable_list[@]}"; do
+        if echo "$loaded" | grep -qx "$ext"; then
+            printf "       %-18s already ON\n" "$ext"
+            continue
+        fi
+        # Built-in extensions (e.g. pdo, mbstring) have no .so file; try enable anyway.
+        if [[ -n "$ext_dir" && ! -f "$ext_dir/$ext.so" && ! -f "$ext_dir/php_$ext.so" ]]; then
+            # Check if it's a static built-in via php -m again (case-insensitive match above already failed)
+            printf "       \033[90mskip  %-18s (not built into this PHP)\033[0m\n" "$ext"
+            continue
+        fi
+        if phpvm_ext_enable "$ext" >/dev/null 2>&1; then
+            _ok "Enabled: $ext"
+        else
+            _warn "Could not enable: $ext"
+        fi
+    done
+
+    if [[ ${#pecl_list[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "  \033[33m[2/2] PECL extensions ...\033[0m"
+        for ext in "${pecl_list[@]}"; do
+            if echo "$loaded" | grep -qx "$ext"; then
+                printf "       %-18s already ON\n" "$ext"
+                continue
+            fi
+            if [[ -f "$ext_dir/$ext.so" || -f "$ext_dir/php_$ext.so" ]]; then
+                phpvm_ext_enable "$ext" >/dev/null 2>&1 && _ok "Enabled: $ext"
+            else
+                _step "Installing $ext via PECL ..."
+                if phpvm_ext_install "$ext"; then
+                    phpvm_ext_enable "$ext" >/dev/null 2>&1 && _ok "Enabled: $ext"
+                fi
+            fi
+        done
+    fi
+
+    echo ""
+    _ok "Done! Verify with: php -m"
+    echo ""
+    if [[ "$preset" == "minimal" ]]; then
+        _dim "For Redis + GD + opcache + intl, run: phpvm ext laravel full"
+    else
+        _dim "Optional extras:"
+        _dim "  phpvm ext install xdebug      # debugger"
+        _dim "  phpvm ext install imagick     # advanced image processing"
+        _dim "  phpvm composer                # install Composer"
+    fi
+    echo ""
+}
+
 phpvm_ext() {
     local sub="${1:-help}"
     local name="${2:-}"
@@ -683,8 +768,127 @@ phpvm_ext() {
         enable)    phpvm_ext_enable  "$name" ;;
         disable)   phpvm_ext_disable "$name" ;;
         info)      phpvm_ext_info    "$name" ;;
+        laravel)   phpvm_ext_laravel "$name" ;;
         help|*)    phpvm_ext_help ;;
     esac
+}
+
+# ==============================================================================
+#  COMPOSER (one composer.phar per active PHP version)
+# ==============================================================================
+phpvm_composer() {
+    local cur
+    cur=$(_phpvm_current_version)
+    [[ -z "$cur" ]] && { _err "No active PHP version. Run: phpvm use <version>"; return 1; }
+
+    local php_root="$PHPVM_VERSIONS/$cur"
+    local php_bin="$php_root/bin/php"
+    [[ ! -x "$php_bin" ]] && { _err "php binary not found: $php_bin"; return 1; }
+
+    local phar="$php_root/bin/composer.phar"
+    local shim="$php_root/bin/composer"
+
+    if [[ -x "$shim" && -f "$phar" ]]; then
+        _warn "Composer already installed at $shim"
+        _dim "Run: composer --version"
+        return 0
+    fi
+
+    # openssl is bundled on most distros' PHP-from-source builds; warn if missing.
+    if ! "$php_bin" -r "exit(extension_loaded('openssl') ? 0 : 1);" 2>/dev/null; then
+        _warn "openssl extension not loaded; Composer requires it."
+        _dim "Enable it then retry: phpvm ext enable openssl"
+    fi
+
+    local installer_url="https://getcomposer.org/installer"
+    local sig_url="https://composer.github.io/installer.sig"
+    local tmp; tmp=$(mktemp -t composer-setup.XXXXXX.php) || { _err "mktemp failed."; return 1; }
+
+    _step "Downloading Composer installer ..."
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$installer_url" -o "$tmp" || { _err "Download failed."; rm -f "$tmp"; return 1; }
+    elif command -v wget &>/dev/null; then
+        wget -qO "$tmp" "$installer_url" || { _err "Download failed."; rm -f "$tmp"; return 1; }
+    else
+        _err "curl or wget is required."; rm -f "$tmp"; return 1
+    fi
+
+    _step "Verifying installer integrity ..."
+    local expected actual
+    if command -v curl &>/dev/null; then
+        expected=$(curl -fsSL "$sig_url" 2>/dev/null | tr -d '[:space:]')
+    else
+        expected=$(wget -qO- "$sig_url" 2>/dev/null | tr -d '[:space:]')
+    fi
+    actual=$("$php_bin" -r "echo hash_file('sha384', '$tmp');" 2>/dev/null)
+
+    if [[ -z "$expected" || "$actual" != "$expected" ]]; then
+        _err "Hash mismatch! Installer may be corrupt or tampered."
+        rm -f "$tmp"
+        return 1
+    fi
+    _ok "Hash verified."
+
+    _step "Installing Composer ..."
+    mkdir -p "$php_root/bin"
+    (cd "$php_root/bin" && "$php_bin" "$tmp" --quiet --filename=composer.phar) || {
+        _err "Composer installer failed."
+        rm -f "$tmp"
+        return 1
+    }
+    rm -f "$tmp"
+
+    [[ ! -f "$phar" ]] && { _err "composer.phar not created at $phar"; return 1; }
+
+    # POSIX shim — works in bash/zsh/sh.
+    cat > "$shim" <<EOF
+#!/usr/bin/env sh
+exec "$php_bin" "$phar" "\$@"
+EOF
+    chmod +x "$shim"
+
+    _ok "Composer installed!"
+    _ok "  phar : $phar"
+    _ok "  shim : $shim"
+    echo ""
+    "$php_bin" "$phar" --version 2>/dev/null
+    echo ""
+    _dim "Note: composer is installed inside the PHP $cur bin dir."
+    _dim "After 'phpvm use <other>', re-run 'phpvm composer' for that version."
+}
+
+# ==============================================================================
+#  FIX-INI (sync extension_dir in active php.ini)
+# ==============================================================================
+phpvm_fix_ini() {
+    local cur
+    cur=$(_phpvm_current_version)
+    [[ -z "$cur" ]] && { _err "No active PHP version. Run: phpvm use <version>"; return 1; }
+
+    local target_dir="$PHPVM_VERSIONS/$cur"
+    local php_bin="$target_dir/bin/php"
+    local ini="$target_dir/etc/php.ini"
+    [[ ! -x "$php_bin" ]] && { _err "php binary not found: $php_bin"; return 1; }
+    [[ ! -f "$ini"     ]] && { _err "php.ini not found: $ini"; return 1; }
+
+    # Resolve the real extension_dir compiled into PHP.
+    local ext_path
+    ext_path=$("$php_bin" -r "echo PHP_EXTENSION_DIR;" 2>/dev/null)
+    [[ -z "$ext_path" ]] && { _err "Could not resolve PHP_EXTENSION_DIR."; return 1; }
+
+    if grep -qE '^\s*;?\s*extension_dir\s*=' "$ini"; then
+        # In-place edit, escaping path for sed (/ in path).
+        local esc
+        esc=$(printf '%s' "$ext_path" | sed 's:[\\/&]:\\&:g')
+        sed -i.bak -E "s|^[[:space:]]*;?[[:space:]]*extension_dir[[:space:]]*=.*$|extension_dir = \"$esc\"|" "$ini"
+        rm -f "$ini.bak"
+        _ok "Fixed extension_dir → $ext_path"
+    else
+        printf '\nextension_dir = "%s"\n' "$ext_path" >> "$ini"
+        _ok "Added extension_dir → $ext_path"
+    fi
+
+    _dim "Verify: phpvm ext list"
 }
 
 # ==============================================================================
@@ -703,6 +907,9 @@ phpvm_ext_help() {
   phpvm ext install <name>         Install via PECL
   phpvm ext install <name> <ver>   Install specific version via PECL
   phpvm ext info    <name>         Extension details
+  phpvm ext laravel                Enable all Laravel extensions (full)
+  phpvm ext laravel minimal        Enable required Laravel extensions only
+  phpvm ext laravel full           Enable required + recommended + Redis
 
   Examples:
     phpvm ext install redis
@@ -729,7 +936,16 @@ phpvm_help() {
     phpvm uninstall <version>      Remove a PHP version
     phpvm which                    Path to active php binary
     phpvm ini                      Open active php.ini in \$EDITOR
+    phpvm fix-ini                  Sync extension_dir in active php.ini
     phpvm deps                     Print dependency install command
+
+  COMPOSER
+    phpvm composer                 Install Composer for active PHP version
+
+  LARAVEL QUICK SETUP
+    phpvm ext laravel              Enable all Laravel extensions (full)
+    phpvm ext laravel minimal      Required extensions only
+    phpvm ext laravel full         Required + recommended + Redis
 
   AUTO-SWITCH (.phpvmrc)
     phpvm auto                     Switch to the version named in .phpvmrc
@@ -888,6 +1104,8 @@ phpvm() {
         ini)                   phpvm_ini ;;
         deps)                  phpvm_deps ;;
         ext)                   phpvm_ext       "$@" ;;
+        composer)              phpvm_composer ;;
+        fix-ini)               phpvm_fix_ini ;;
         auto)                  phpvm_auto ;;
         hook)                  phpvm_hook      "$@" ;;
         upgrade|update)        phpvm_upgrade ;;
