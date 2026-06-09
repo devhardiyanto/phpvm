@@ -716,7 +716,11 @@ phpvm_ext_laravel() {
             printf "       \033[90mskip  %-18s (not built into this PHP)\033[0m\n" "$ext"
             continue
         fi
-        phpvm_ext_enable "$ext" >/dev/null 2>&1 && _ok "Enabled: $ext" || _warn "Could not enable: $ext"
+        if phpvm_ext_enable "$ext" >/dev/null 2>&1; then
+            _ok "Enabled: $ext"
+        else
+            _warn "Could not enable: $ext"
+        fi
     done
 
     if [[ ${#pecl_list[@]} -gt 0 ]]; then
