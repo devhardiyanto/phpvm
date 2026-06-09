@@ -3,9 +3,18 @@ Describe 'Get-VSVersion' {
         . $PSScriptRoot/Common.ps1
     }
 
-    It 'Maps PHP 7.x to vc15' {
+    It 'Maps PHP 5.x to vc11' {
+        Get-VSVersion '5.6.40' | Should -Be 'vc11'
+    }
+
+    It 'Maps PHP 7.0 / 7.1 to vc14' {
+        Get-VSVersion '7.0.33' | Should -Be 'vc14'
+        Get-VSVersion '7.1.33' | Should -Be 'vc14'
+    }
+
+    It 'Maps PHP 7.2 - 7.4 to vc15' {
+        Get-VSVersion '7.2.34' | Should -Be 'vc15'
         Get-VSVersion '7.4.33' | Should -Be 'vc15'
-        Get-VSVersion '7.0.0'  | Should -Be 'vc15'
     }
 
     It 'Maps PHP 8.0 - 8.3 to vs16' {
@@ -77,6 +86,18 @@ Describe 'Resolve-LatestPatch' {
 '@
         }
         Resolve-LatestPatch '7.3' | Should -Be '7.3.33'
+    }
+
+    It 'Matches VC14 (PHP 7.0 / 7.1) and VC11 (PHP 5.x) archives' {
+        Mock -CommandName Get-WebString -MockWith {
+            @'
+<a href="php-7.0.0-Win32-VC14-x64.zip">...</a>
+<a href="php-7.0.33-Win32-VC14-x64.zip">...</a>
+<a href="php-5.6.40-Win32-VC11-x64.zip">...</a>
+'@
+        }
+        Resolve-LatestPatch '7.0' | Should -Be '7.0.33'
+        Resolve-LatestPatch '5.6' | Should -Be '5.6.40'
     }
 }
 

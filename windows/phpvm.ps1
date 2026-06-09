@@ -127,10 +127,13 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
 
 
 # -- Resolve PHP download URL --------------------------------------------------
-# Per windows.php.net: 7.x -> vc15, 8.0-8.3 -> vs16, 8.4+ -> vs17.
+# Per windows.php.net: 5.x -> vc11, 7.0-7.1 -> vc14, 7.2-7.4 -> vc15,
+# 8.0-8.3 -> vs16, 8.4+ -> vs17.
 function Get-VSVersion ([string]$ver) {
     $major = [int]($ver -split '\.')[0]
     $minor = [int]($ver -split '\.')[1]
+    if ($major -eq 5)                          { return "vc11" }
+    if ($major -eq 7 -and $minor -le 1)        { return "vc14" }
     if ($major -eq 7)                          { return "vc15" }
     if ($major -eq 8 -and $minor -le 3)        { return "vs16" }
     if ($major -eq 8 -and $minor -ge 4)        { return "vs17" }
@@ -164,8 +167,8 @@ function Resolve-PHPURL ([string]$ver) {
 function Resolve-LatestPatch ([string]$majorMinor) {
     $patches = @()
     $escaped = [regex]::Escape($majorMinor)
-    # (?i) - older 7.x archives use uppercase VC15; newer 8.x use lowercase vs16/vs17.
-    $pattern = "(?i)php-($escaped\.\d+)-(?:nts-)?Win32-(?:vs1[567]|vc15)-x64\.zip"
+    # (?i) - older archives use uppercase (VC11/VC14/VC15); newer 8.x lowercase (vs16/vs17).
+    $pattern = "(?i)php-($escaped\.\d+)-(?:nts-)?Win32-(?:vs1[567]|vc1[145])-x64\.zip"
 
     foreach ($index in @(
         "https://windows.php.net/downloads/releases/"
