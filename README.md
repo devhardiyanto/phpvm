@@ -68,6 +68,31 @@ phpvm hook uninstall    # remove the hook
 
 `.phpvmrc` accepts a full semver (`8.3.0`), a major.minor (`8.3` — picks the highest installed patch), or a leading `v` (`v8.3.0`). Lines starting with `#` are comments. If the version is not installed locally, phpvm warns but never auto-installs.
 
+### Auto-Switch with `.phpvmrc` (Linux)
+
+Same `.phpvmrc` file works on Linux — the format is identical.
+
+```bash
+echo "8.3" > .phpvmrc
+phpvm auto          # one-shot switch from the current directory
+```
+
+For automatic switching on every `cd`, enable the shell hook:
+
+```bash
+phpvm hook enable       # writes $PHPVM_DIR/.auto-hook flag
+exec $SHELL             # or restart your terminal
+```
+
+phpvm registers the hook in the shell it detects:
+
+| Shell | Mechanism |
+|---|---|
+| zsh | `add-zsh-hook chpwd _phpvm_auto` — runs on every directory change |
+| bash | `PROMPT_COMMAND="_phpvm_auto -s; ..."` — runs before every prompt |
+
+Manage with `phpvm hook status` / `phpvm hook disable`. Because `phpvm.sh` is already sourced into your shell rc, there is no separate file edit step — the hook activates the next time the shell loads.
+
 ### Extension Management
 
 ```bash
