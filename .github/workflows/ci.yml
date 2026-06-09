@@ -5,12 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# Default: no write permissions. Individual jobs/workflows must opt in
+# explicitly (release.yml needs `contents: write`).
+permissions:
+  contents: read
+
 jobs:
   windows:
     name: Windows lint + tests
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
       - name: Install Pester 5 and PSScriptAnalyzer
         shell: pwsh
@@ -40,7 +45,7 @@ jobs:
     name: Linux shellcheck + bats
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
       - name: Install shellcheck + bats
         run: |
@@ -57,7 +62,7 @@ jobs:
     name: Version consistency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
       - name: Check version.txt matches all 4 sources
         run: |
