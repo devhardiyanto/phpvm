@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.4.5"
+$PHPVM_VERSION = "1.4.6"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -26,25 +26,21 @@ $PHPVM_LAST_CHECK   = "$PHPVM_DIR\.last_update_check"
 $PHPVM_CHECK_INTERVAL = 86400  # 24 hours in seconds
 
 function Check-PHPVMUpdate {
-    # Skip if no internet or in CI environments
     if ($env:CI -or $env:PHPVM_NO_UPDATE_CHECK) { return }
 
-    # Only check once per day
     if (Test-Path $PHPVM_LAST_CHECK) {
         $lastCheck = (Get-Item $PHPVM_LAST_CHECK).LastWriteTime
         $elapsed   = (Get-Date) - $lastCheck
         if ($elapsed.TotalSeconds -lt $PHPVM_CHECK_INTERVAL) { return }
     }
 
-    # Update timestamp first (avoid hammering if fetch is slow)
+    # Touch before fetch so a slow request doesn't trigger repeated retries
     [System.IO.File]::WriteAllText($PHPVM_LAST_CHECK, (Get-Date).ToString())
 
     try {
         $latest = (Get-WebString $PHPVM_UPDATE_URL 3).Trim()
-
         if ([string]::IsNullOrEmpty($latest)) { return }
 
-        # Compare semantic versions
         $current = [version]$PHPVM_VERSION
         $remote  = [version]$latest
 
@@ -70,7 +66,7 @@ function Write-Dim  ($m) { Write-Host "  $m" -ForegroundColor DarkGray }
 
 # -- Init ----------------------------------------------------------------------
 function Initialize-PHPVM {
-    # Force TLS 1.2 - GitHub blocks older TLS versions
+    # GitHub blocks TLS < 1.2
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     foreach ($d in @($PHPVM_DIR, $VERSIONS_DIR, $PHPVM_BIN)) {
         if (-not (Test-Path $d)) {
@@ -80,10 +76,9 @@ function Initialize-PHPVM {
 }
 
 # -- PHP build metadata --------------------------------------------------------
-# Helper: run php -r and strip any Warning/Notice lines from output
+# Some Windows PHP builds leak warnings into stdout; strip them.
 function Invoke-PHP ([string]$exe, [string]$code) {
     $out = & $exe -r $code 2>$null
-    # Filter out lines that are PHP warnings/notices bleeding into stdout
     $clean = $out | Where-Object { $_ -notmatch "^(PHP )?(Warning|Notice|Deprecated|Fatal|Parse)" }
     return ($clean -join "").Trim()
 }
@@ -94,11 +89,9 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
         else { throw "No active PHP version. Run: phpvm use <version>" }
     }
 
-    # php -i also leaks warnings to stdout on some Windows builds - filter them too
     $raw  = (& $phpExe -i 2>$null) | Where-Object { $_ -notmatch "^(PHP )?(Warning|Notice|Deprecated)" }
 
     $version = Invoke-PHP $phpExe "echo PHP_VERSION;"
-    # Extra safety: extract only the semver part in case anything leaked through
     if ($version -match '(\d+\.\d+\.\d+)') { $version = $Matches[1] }
     $short = $version -replace '^(\d+\.\d+)\..*', '$1'
 
@@ -110,11 +103,10 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
         "MSVC17|VS17" { "vs17"; break }
         "MSVC16|VS16" { "vs16"; break }
         "MSVC15|VS15" { "vs15"; break }
-        default        { Get-VSVersion $version }  # fallback: derive from version number
+        default        { Get-VSVersion $version }
     }
 
-    # ExtDir: always derive from PHP exe location - don't trust php.ini
-    # which may still point to a system PHP (e.g. C:\php\ext)
+    # Derive ext dir from exe; php.ini may still point at a system PHP.
     $phpRoot = Split-Path $phpExe -Parent
     $extDir  = "$phpRoot\ext"
 
@@ -135,17 +127,14 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
 
 
 # -- Resolve PHP download URL --------------------------------------------------
-# VS version mapping (based on windows.php.net actual filenames):
-#   PHP 7.x        -> vc15
-#   PHP 8.0 - 8.3  -> vs16
-#   PHP 8.4+       -> vs17
+# Per windows.php.net: 7.x -> vc15, 8.0-8.3 -> vs16, 8.4+ -> vs17.
 function Get-VSVersion ([string]$ver) {
     $major = [int]($ver -split '\.')[0]
     $minor = [int]($ver -split '\.')[1]
     if ($major -eq 7)                          { return "vc15" }
     if ($major -eq 8 -and $minor -le 3)        { return "vs16" }
     if ($major -eq 8 -and $minor -ge 4)        { return "vs17" }
-    return "vs17"  # default for future versions
+    return "vs17"
 }
 
 function Resolve-PHPURL ([string]$ver) {
@@ -159,7 +148,8 @@ function Resolve-PHPURL ([string]$ver) {
     foreach ($url in $urls) {
         try {
             $req = [System.Net.WebRequest]::Create($url)
-            $req.Method = "HEAD"
+            $req.Method  = "HEAD"
+            $req.Timeout = 5000
             $res = $req.GetResponse()
             $res.Close()
             return $url
@@ -168,6 +158,28 @@ function Resolve-PHPURL ([string]$ver) {
         }
     }
     return $null
+}
+
+# "8.3" -> highest "8.3.x" published on windows.php.net.
+function Resolve-LatestPatch ([string]$majorMinor) {
+    $patches = @()
+    $escaped = [regex]::Escape($majorMinor)
+    $pattern = "php-($escaped\.\d+)-(?:nts-)?Win32-(?:vs1[567]|vc15)-x64\.zip"
+
+    foreach ($index in @(
+        "https://windows.php.net/downloads/releases/"
+        "https://windows.php.net/downloads/releases/archives/"
+    )) {
+        try {
+            $html = Get-WebString $index 5
+        } catch { continue }
+        foreach ($m in [regex]::Matches($html, $pattern)) {
+            $patches += $m.Groups[1].Value
+        }
+    }
+
+    if (-not $patches) { return $null }
+    return ($patches | Sort-Object -Unique | Sort-Object { [version]$_ } -Descending | Select-Object -First 1)
 }
 
 # -- Junction helpers ----------------------------------------------------------
@@ -237,6 +249,19 @@ function Test-URLExists ([string]$url) {
 function Invoke-Install ([string]$ver) {
     if (-not $ver) { Write-Err "Usage: phpvm install <version>  (e.g. phpvm install 8.3.0)"; return }
 
+    # Allow "8.3" -> resolve to latest patch
+    if ($ver -match '^\d+\.\d+$') {
+        Write-Step "Resolving latest patch for PHP $ver ..."
+        $resolved = Resolve-LatestPatch $ver
+        if (-not $resolved) {
+            Write-Err "No patch releases found for PHP $ver"
+            Write-Dim "Browse: https://windows.php.net/downloads/releases/"
+            return
+        }
+        Write-Ok "Latest PHP $ver -> $resolved"
+        $ver = $resolved
+    }
+
     $targetDir = "$VERSIONS_DIR\$ver"
     if (Test-Path $targetDir) {
         Write-Warn "PHP $ver is already installed. Run: phpvm use $ver"
@@ -271,21 +296,18 @@ function Invoke-Install ([string]$ver) {
     Write-Step "Extracting ..."
     New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
     Expand-Archive -Path $tempFile -DestinationPath $targetDir -Force
-    Unblock-PHPVMPath $targetDir
     Remove-Item $tempFile -Force
 
-    # Bootstrap php.ini from template
     if (-not (Test-Path "$targetDir\php.ini")) {
         $src = @("$targetDir\php.ini-development", "$targetDir\php.ini-production") |
                Where-Object { Test-Path $_ } | Select-Object -First 1
         if ($src) { Copy-Item $src "$targetDir\php.ini" }
     }
 
-    # Fix extension_dir in php.ini to point to THIS version's ext folder
+    # Pin extension_dir to this version's ext folder (absolute path).
     $ini = "$targetDir\php.ini"
     if (Test-Path $ini) {
         $content = Get-Content $ini -Raw
-        # Replace commented or wrong extension_dir with correct absolute path
         $extPath = "$targetDir\ext"
         $content = $content -replace '(?m)^;?\s*extension_dir\s*=.*$', "extension_dir = `"$extPath`""
         $content | Set-Content $ini -NoNewline
@@ -308,19 +330,15 @@ function Invoke-Use ([string]$ver) {
         return
     }
 
-    Unblock-PHPVMPath $targetDir
-
     Remove-Junction $CURRENT_LINK
     cmd /c mklink /J `"$CURRENT_LINK`" `"$targetDir`" | Out-Null
 
-    # Persist CURRENT_LINK in user PATH (idempotent)
+    # Persist + apply to current session (idempotent).
     $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
     if ($null -eq $userPath) { $userPath = "" }
     $parts    = $userPath -split ";" | Where-Object { $_ -and $_ -ne $CURRENT_LINK }
     $newPath  = (@($CURRENT_LINK) + $parts -join ";") -replace ";{2,}", ";"
     [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
-
-    # Update current session immediately
     if ($env:PATH -notlike "*$CURRENT_LINK*") { $env:PATH = "$CURRENT_LINK;$env:PATH" }
 
     Write-Ok "Now using PHP $ver"
@@ -441,8 +459,6 @@ function Ext-Loaded {
 
 function Edit-IniExtension ([string]$extName, [bool]$enable) {
     $info    = Get-PHPBuildInfo
-    $phpRoot = Split-Path $info.Exe -Parent
-    Unblock-PHPVMPath $phpRoot
     $iniPath = $info.IniPath
 
     if (-not $iniPath -or -not (Test-Path $iniPath)) {
@@ -456,7 +472,7 @@ function Edit-IniExtension ([string]$extName, [bool]$enable) {
     $zendExts = @("xdebug", "opcache", "ioncube_loader")
     $prefix   = if ($zendExts -contains $extLower) { "zend_extension" } else { "extension" }
 
-    # Match: optional semicolons, then extension=name or extension=php_name.dll
+    # Matches `;extension=name`, `extension=name`, or `extension=php_name.dll`.
     $linePattern = "(?im)^(;+\s*)?($prefix\s*=\s*(?:php_)?$([regex]::Escape($extLower))(?:\.dll)?)\s*$"
 
     if ($enable) {
@@ -561,7 +577,7 @@ function Install-PECLExt ([string]$extName, [string]$requestedVer = "") {
     Unblock-PHPVMPath $dllDest
     Write-Ok "Installed: php_$extName.dll"
 
-    # Copy dependency DLLs to PHP root
+    # Dependency DLLs go next to php.exe (must be on PATH at load time).
     $phpRoot = Split-Path $info.Exe -Parent
     Get-ChildItem $tempExtract -Filter "*.dll" |
         Where-Object { $_.Name -ne "php_$extName.dll" } |
@@ -625,7 +641,6 @@ function Install-XDebug {
     Unblock-PHPVMPath $dllDest
     Remove-Item $tempDll -Force
 
-    # Append xdebug block to php.ini if not already present
     $iniPath = $info.IniPath
     if ($iniPath -and (Test-Path $iniPath)) {
         $existing = Get-Content $iniPath -Raw
@@ -671,7 +686,7 @@ if (extension_loaded('$extName')) {
 function Ext-Laravel ([string]$preset = "full") {
     $info = Get-PHPBuildInfo
 
-    # Extensions bundled with PHP (just need enable in php.ini)
+    # Shipped with PHP - only need enable in php.ini.
     $bundledMinimal = @(
         "openssl"       # HTTPS, encryption, queue
         "pdo"           # database abstraction
@@ -698,7 +713,7 @@ function Ext-Laravel ([string]$preset = "full") {
         "sockets"       # Laravel Reverb / WebSocket / queue worker
     )
 
-    # PECL extensions (need download + enable)
+    # Need PECL download + enable.
     $peclFull = @(
         "redis"         # Redis cache, session, queue driver
     )
@@ -722,16 +737,17 @@ function Ext-Laravel ([string]$preset = "full") {
     Write-Host "  [1/2] Enabling bundled extensions ..." -ForegroundColor Yellow
     $extDir = $info.ExtDir
 
+    # Snapshot once - Edit-IniExtension doesn't reload PHP.
+    $loaded = (& $info.Exe -m 2>$null) | ForEach-Object { $_.Trim().ToLower() }
+
     foreach ($ext in $enableList) {
         $dllPath = "$extDir\php_$ext.dll"
 
-        # Skip if DLL doesn't exist (e.g. pdo_pgsql not shipped in some builds)
         if (-not (Test-Path $dllPath)) {
             Write-Host "       skip  $ext  (DLL not found in this PHP build)" -ForegroundColor DarkGray
             continue
         }
 
-        $loaded = (& $info.Exe -m 2>$null) | ForEach-Object { $_.Trim().ToLower() }
         if ($loaded -contains $ext.ToLower()) {
             Write-Host ("       {0,-18} already ON" -f $ext) -ForegroundColor DarkGray
         } else {
@@ -746,7 +762,6 @@ function Ext-Laravel ([string]$preset = "full") {
         foreach ($ext in $peclList) {
             $dllPath = "$extDir\php_$ext.dll"
             if (Test-Path $dllPath) {
-                $loaded = (& $info.Exe -m 2>$null) | ForEach-Object { $_.Trim().ToLower() }
                 if ($loaded -contains $ext.ToLower()) {
                     Write-Host ("       {0,-18} already ON" -f $ext) -ForegroundColor DarkGray
                 } else {
@@ -826,7 +841,6 @@ function Show-ExtHelp {
 }
 
 function Invoke-Composer {
-    # 1. Ensure openssl is enabled (required for https)
     $info = Get-PHPBuildInfo
     $loaded = (& $info.Exe -m 2>$null) | ForEach-Object { $_.Trim().ToLower() }
     if ($loaded -notcontains "openssl") {
@@ -835,7 +849,7 @@ function Invoke-Composer {
         Write-Warn "openssl enabled. If Composer install fails, restart terminal first then re-run 'phpvm composer'."
     }
 
-    # 2. Determine install location - PHP version dir so each version has its own composer
+    # One composer per PHP version dir; switch versions -> re-run `phpvm composer`.
     $phpRoot    = Split-Path $info.Exe -Parent
     $composerPhar = "$phpRoot\composer.phar"
     $composerBat  = "$phpRoot\composer.bat"
@@ -846,7 +860,6 @@ function Invoke-Composer {
         return
     }
 
-    # 3. Download installer and verify hash
     $installerUrl  = "https://getcomposer.org/installer"
     $installerFile = "$env:TEMP\composer-setup.php"
     $sigUrl        = "https://composer.github.io/installer.sig"
@@ -861,7 +874,6 @@ function Invoke-Composer {
         return
     }
 
-    # 4. Verify SHA-384 hash
     Write-Step "Verifying installer integrity ..."
     $actualHash = (& $info.Exe -r "echo hash_file('sha384', '$($installerFile -replace '\\','\\\\')');")
     if ($actualHash -ne $expectedHash) {
@@ -871,7 +883,6 @@ function Invoke-Composer {
     }
     Write-Ok "Hash verified."
 
-    # 5. Run installer - outputs composer.phar to current dir, move to PHP root
     Write-Step "Installing Composer ..."
     Push-Location $phpRoot
     & $info.Exe $installerFile --quiet
@@ -885,7 +896,7 @@ function Invoke-Composer {
 
     Remove-Item $installerFile -Force
 
-    # 6. Create composer.bat shim so 'composer' works globally from CMD + PS
+    # Shim so `composer` works from CMD + PowerShell without PATH gymnastics.
     $bat = @"
 @echo off
 php "%~dp0composer.phar" %*
@@ -961,8 +972,6 @@ function Invoke-FixIni {
 
     if (-not (Test-Path $ini)) { Write-Err "php.ini not found: $ini"; return }
 
-    Unblock-PHPVMPath $targetDir
-
     $before  = Get-Content $ini -Raw
     $content = $before -replace '(?m)^;?\s*extension_dir\s*=.*$', "extension_dir = `"$extPath`""
 
@@ -973,7 +982,7 @@ function Invoke-FixIni {
         Write-Ok "Fixed extension_dir -> $extPath"
     }
 
-    # Also ensure extension_dir line exists if it was missing entirely
+    # Append if extension_dir was missing entirely.
     if ($content -notmatch 'extension_dir\s*=') {
         Add-Content $ini "`nextension_dir = `"$extPath`""
         Write-Ok "Added extension_dir -> $extPath"
@@ -1003,7 +1012,6 @@ function Invoke-Upgrade {
 
     Write-Step "Upgrading phpvm $PHPVM_VERSION -> $latest ..."
 
-    # Backup current script
     $backup = "$PHPVM_DIR\phpvm.ps1.bak"
     Copy-Item $scriptDest $backup -Force
     Write-Dim "Backup saved: $backup"
@@ -1014,7 +1022,6 @@ function Invoke-Upgrade {
         Write-Ok "phpvm upgraded to $latest!"
         Write-Dim "Restart your terminal to use the new version."
     } catch {
-        # Rollback on failure
         Write-Err "Upgrade failed: $_"
         Copy-Item $backup $scriptDest -Force
         Write-Warn "Rolled back to previous version."
@@ -1023,7 +1030,12 @@ function Invoke-Upgrade {
 
 
 Initialize-PHPVM
-Check-PHPVMUpdate
+
+# Skip the daily update check for fast/local commands.
+$skipUpdateFor = @("", "help", "--help", "version", "-v", "list", "ls", "current", "which", "ini")
+if ($Command.ToLower() -notin $skipUpdateFor) {
+    Check-PHPVMUpdate
+}
 
 switch ($Command.ToLower()) {
     "install"                       { Invoke-Install   $SubOrVer }
