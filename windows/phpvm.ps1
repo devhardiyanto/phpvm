@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.4.6"
+$PHPVM_VERSION = "1.5.0"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -127,10 +127,13 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
 
 
 # -- Resolve PHP download URL --------------------------------------------------
-# Per windows.php.net: 7.x -> vc15, 8.0-8.3 -> vs16, 8.4+ -> vs17.
+# Per windows.php.net: 5.x -> vc11, 7.0-7.1 -> vc14, 7.2-7.4 -> vc15,
+# 8.0-8.3 -> vs16, 8.4+ -> vs17.
 function Get-VSVersion ([string]$ver) {
     $major = [int]($ver -split '\.')[0]
     $minor = [int]($ver -split '\.')[1]
+    if ($major -eq 5)                          { return "vc11" }
+    if ($major -eq 7 -and $minor -le 1)        { return "vc14" }
     if ($major -eq 7)                          { return "vc15" }
     if ($major -eq 8 -and $minor -le 3)        { return "vs16" }
     if ($major -eq 8 -and $minor -ge 4)        { return "vs17" }
@@ -164,7 +167,8 @@ function Resolve-PHPURL ([string]$ver) {
 function Resolve-LatestPatch ([string]$majorMinor) {
     $patches = @()
     $escaped = [regex]::Escape($majorMinor)
-    $pattern = "php-($escaped\.\d+)-(?:nts-)?Win32-(?:vs1[567]|vc15)-x64\.zip"
+    # (?i) - older archives use uppercase (VC11/VC14/VC15); newer 8.x lowercase (vs16/vs17).
+    $pattern = "(?i)php-($escaped\.\d+)-(?:nts-)?Win32-(?:vs1[567]|vc1[145])-x64\.zip"
 
     foreach ($index in @(
         "https://windows.php.net/downloads/releases/"
@@ -232,6 +236,28 @@ function Unblock-PHPVMPath ([string]$path) {
     }
 }
 
+# Look up the expected SHA-256 for a PHP zip on windows.php.net.
+# Returns lowercase hex digest, or $null if no checksum is published.
+function Get-PHPZipHash ([string]$zipUrl) {
+    $sumUrl  = ($zipUrl -replace '/[^/]+\.zip$', '/') + 'sha256sum.txt'
+    $zipName = Split-Path $zipUrl -Leaf
+    try { $sums = Get-WebString $sumUrl 10 } catch { return $null }
+
+    foreach ($line in $sums -split "`r?`n") {
+        if ($line -match "^([0-9a-fA-F]{64})\s+\*?$([regex]::Escape($zipName))\s*$") {
+            return $Matches[1].ToLower()
+        }
+    }
+    return $null
+}
+
+# Fetch a sibling .sha256 file (xdebug.org convention) and return its digest.
+function Get-XDebugHash ([string]$dllUrl) {
+    try { $content = Get-WebString "$dllUrl.sha256" 10 } catch { return $null }
+    if ($content -match '([0-9a-fA-F]{64})') { return $Matches[1].ToLower() }
+    return $null
+}
+
 function Test-URLExists ([string]$url) {
     try {
         $req = [System.Net.WebRequest]::Create($url)
@@ -290,6 +316,24 @@ function Invoke-Install ([string]$ver) {
     Write-Step "Downloading $(Split-Path $url -Leaf) ..."
     try { Invoke-Download $url $tempFile }
     catch { Write-Err "Download failed: $_"; return }
+
+    if (-not $env:PHPVM_SKIP_HASH) {
+        Write-Step "Verifying SHA-256 ..."
+        $expected = Get-PHPZipHash $url
+        if ($expected) {
+            $actual = (Get-FileHash -Path $tempFile -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected) {
+                Write-Err "SHA-256 mismatch! Aborting."
+                Write-Dim "  expected: $expected"
+                Write-Dim "  actual:   $actual"
+                Remove-Item $tempFile -Force
+                return
+            }
+            Write-Ok "SHA-256 verified."
+        } else {
+            Write-Warn "No published SHA-256 for $(Split-Path $url -Leaf); continuing unverified."
+        }
+    }
 
     Unblock-PHPVMPath $tempFile
 
@@ -610,21 +654,21 @@ function Install-XDebug {
     try {
         $html    = Get-WebString "https://xdebug.org/files/"
         $pattern = "php_xdebug-([\d.]+)-$phpShort-$vs-$archSuffix\.dll"
-        $matches = [regex]::Matches($html, $pattern)
+        $hits    = [regex]::Matches($html, $pattern)
 
-        if (-not $matches.Count) {
+        if (-not $hits.Count) {
             $archSuffix = if ($ts -eq "ts") { "nts-x86_64" } else { "x86_64" }
             $pattern    = "php_xdebug-([\d.]+)-$phpShort-$vs-$archSuffix\.dll"
-            $matches    = [regex]::Matches($html, $pattern)
+            $hits       = [regex]::Matches($html, $pattern)
         }
 
-        if (-not $matches.Count) {
+        if (-not $hits.Count) {
             Write-Err "No XDebug DLL found for PHP $phpShort / $vs."
             Write-Dim "Use the wizard: https://xdebug.org/wizard"
             return
         }
 
-        $xdVer   = ($matches | ForEach-Object { $_.Groups[1].Value } | Sort-Object { [version]$_ } -Descending | Select-Object -First 1)
+        $xdVer   = ($hits | ForEach-Object { $_.Groups[1].Value } | Sort-Object { [version]$_ } -Descending | Select-Object -First 1)
         $dllName = "php_xdebug-$xdVer-$phpShort-$vs-$archSuffix.dll"
         $url     = "https://xdebug.org/files/$dllName"
     } catch {
@@ -636,6 +680,25 @@ function Install-XDebug {
     Write-Step "Downloading XDebug $xdVer ..."
     $tempDll = "$env:TEMP\$dllName"
     Invoke-Download $url $tempDll
+
+    if (-not $env:PHPVM_SKIP_HASH) {
+        Write-Step "Verifying SHA-256 ..."
+        $expected = Get-XDebugHash $url
+        if ($expected) {
+            $actual = (Get-FileHash -Path $tempDll -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected) {
+                Write-Err "SHA-256 mismatch! Aborting."
+                Write-Dim "  expected: $expected"
+                Write-Dim "  actual:   $actual"
+                Remove-Item $tempDll -Force
+                return
+            }
+            Write-Ok "SHA-256 verified."
+        } else {
+            Write-Warn "No SHA-256 published for $dllName; continuing unverified."
+        }
+    }
+
     Unblock-PHPVMPath $tempDll
     Copy-Item $tempDll $dllDest -Force
     Unblock-PHPVMPath $dllDest
@@ -1029,27 +1092,29 @@ function Invoke-Upgrade {
 }
 
 
-Initialize-PHPVM
+# Tests dot-source this file and set $env:PHPVM_NO_ENTRY=1 to skip the entry point.
+if (-not $env:PHPVM_NO_ENTRY) {
+    Initialize-PHPVM
 
-# Skip the daily update check for fast/local commands.
-$skipUpdateFor = @("", "help", "--help", "version", "-v", "list", "ls", "current", "which", "ini")
-if ($Command.ToLower() -notin $skipUpdateFor) {
-    Check-PHPVMUpdate
-}
+    $skipUpdateFor = @("", "help", "--help", "version", "-v", "list", "ls", "current", "which", "ini")
+    if ($Command.ToLower() -notin $skipUpdateFor) {
+        Check-PHPVMUpdate
+    }
 
-switch ($Command.ToLower()) {
-    "install"                       { Invoke-Install   $SubOrVer }
-    "use"                           { Invoke-Use       $SubOrVer }
-    { $_ -in "list", "ls" }         { Invoke-List }
-    "current"                       { Invoke-Current }
-    { $_ -in "uninstall", "remove" }{ Invoke-Uninstall $SubOrVer }
-    "which"                         { Invoke-Which }
-    "ini"                           { Invoke-Ini }
-    "fix-ini"                       { Invoke-FixIni }
-    "ext"                           { Invoke-Ext $SubOrVer $Arg2 }
-    "composer"                      { Invoke-Composer }
-    { $_ -in "upgrade", "update" }  { Invoke-Upgrade }
-    { $_ -in "version", "-v" }      { Write-Ok "phpvm $PHPVM_VERSION" }
-    { $_ -in "help", "--help" }     { Show-Help }
-    default                         { Show-Help }
+    switch ($Command.ToLower()) {
+        "install"                       { Invoke-Install   $SubOrVer }
+        "use"                           { Invoke-Use       $SubOrVer }
+        { $_ -in "list", "ls" }         { Invoke-List }
+        "current"                       { Invoke-Current }
+        { $_ -in "uninstall", "remove" }{ Invoke-Uninstall $SubOrVer }
+        "which"                         { Invoke-Which }
+        "ini"                           { Invoke-Ini }
+        "fix-ini"                       { Invoke-FixIni }
+        "ext"                           { Invoke-Ext $SubOrVer $Arg2 }
+        "composer"                      { Invoke-Composer }
+        { $_ -in "upgrade", "update" }  { Invoke-Upgrade }
+        { $_ -in "version", "-v" }      { Write-Ok "phpvm $PHPVM_VERSION" }
+        { $_ -in "help", "--help" }     { Show-Help }
+        default                         { Show-Help }
+    }
 }

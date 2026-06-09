@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows:
+    name: Windows lint + tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester 5 and PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module -Name Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path ./windows -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          if ($results) {
+            $results | Format-Table -AutoSize
+            throw "PSScriptAnalyzer found $($results.Count) issue(s)."
+          }
+
+      - name: Pester (offline)
+        shell: pwsh
+        run: |
+          Import-Module Pester -MinimumVersion 5.5.0
+          $cfg = Import-PowerShellDataFile ./tests/PesterConfiguration.psd1
+          $conf = New-PesterConfiguration -Hashtable $cfg
+          $conf.Run.Exit = $true
+          Invoke-Pester -Configuration $conf
+
+  linux:
+    name: Linux shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck linux/install.sh linux/phpvm.sh
+
+  version-consistency:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version.txt matches all 4 sources
+        run: |
+          set -e
+          expected=$(tr -d '[:space:]' < version.txt)
+          echo "version.txt -> $expected"
+
+          fail=0
+          check() {
+            local file=$1
+            local pattern=$2
+            local actual
+            actual=$(grep -E "$pattern" "$file" | sed -E "s/.*[\"=]([0-9]+\.[0-9]+\.[0-9]+)\"?/\1/" | head -1)
+            if [ "$actual" != "$expected" ]; then
+              echo "MISMATCH: $file has '$actual', expected '$expected'"
+              fail=1
+            else
+              echo "OK: $file -> $actual"
+            fi
+          }
+
+          check windows/phpvm.ps1   '^\$PHPVM_VERSION'
+          check windows/install.ps1 '^\$PHPVM_VERSION'
+          check linux/phpvm.sh      '^PHPVM_VERSION='
+          check linux/install.sh    '^PHPVM_VERSION='
+
+          exit $fail
