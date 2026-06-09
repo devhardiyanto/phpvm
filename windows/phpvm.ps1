@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.4.4"
+$PHPVM_VERSION = "1.4.5"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -40,8 +40,7 @@ function Check-PHPVMUpdate {
     [System.IO.File]::WriteAllText($PHPVM_LAST_CHECK, (Get-Date).ToString())
 
     try {
-        $ProgressPreference = "SilentlyContinue"
-        $latest = (Invoke-WebRequest -Uri $PHPVM_UPDATE_URL -UseBasicParsing -TimeoutSec 3).Content.Trim()
+        $latest = (Get-WebString $PHPVM_UPDATE_URL 3).Trim()
 
         if ([string]::IsNullOrEmpty($latest)) { return }
 
@@ -198,6 +197,14 @@ function Invoke-Download ([string]$url, [string]$dest) {
     Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
 }
 
+
+function Get-WebString ([string]$url, [int]$timeoutSec = 5) {
+    $ProgressPreference = "SilentlyContinue"
+    $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec $timeoutSec
+    $c = $resp.Content
+    if ($c -is [byte[]]) { $c = [System.Text.Encoding]::UTF8.GetString($c) }
+    return [string]$c
+}
 
 function Unblock-PHPVMPath ([string]$path) {
     if (-not (Test-Path $path)) { return }
@@ -480,7 +487,7 @@ function Edit-IniExtension ([string]$extName, [bool]$enable) {
 
 function Get-PECLVersions ([string]$extName) {
     try {
-        $html = (Invoke-WebRequest -Uri "https://windows.php.net/downloads/pecl/releases/$extName/" -UseBasicParsing).Content
+        $html = Get-WebString "https://windows.php.net/downloads/pecl/releases/$extName/"
         $m    = [regex]::Matches($html, 'href="(\d+\.\d+[\.\d]*)/?">') 
         return $m | ForEach-Object { $_.Groups[1].Value } | Sort-Object { [version]$_ } -Descending
     } catch { return @() }
@@ -585,7 +592,7 @@ function Install-XDebug {
     Write-Step "Fetching XDebug for PHP $phpShort [$ts / $vs] from xdebug.org ..."
 
     try {
-        $html    = (Invoke-WebRequest -Uri "https://xdebug.org/files/" -UseBasicParsing).Content
+        $html    = Get-WebString "https://xdebug.org/files/"
         $pattern = "php_xdebug-([\d.]+)-$phpShort-$vs-$archSuffix\.dll"
         $matches = [regex]::Matches($html, $pattern)
 
@@ -848,7 +855,7 @@ function Invoke-Composer {
     try {
         $ProgressPreference = "SilentlyContinue"
         Invoke-WebRequest -Uri $installerUrl -OutFile $installerFile -UseBasicParsing
-        $expectedHash = (Invoke-WebRequest -Uri $sigUrl -UseBasicParsing).Content.Trim()
+        $expectedHash = (Get-WebString $sigUrl).Trim()
     } catch {
         Write-Err "Download failed: $_"
         return
@@ -983,8 +990,7 @@ function Invoke-Upgrade {
 
     Write-Step "Checking latest version ..."
     try {
-        $ProgressPreference = "SilentlyContinue"
-        $latest = (Invoke-WebRequest -Uri $versionUrl -UseBasicParsing -TimeoutSec 5).Content.Trim()
+        $latest = (Get-WebString $versionUrl 5).Trim()
     } catch {
         Write-Err "Could not reach GitHub. Check your connection."
         return
