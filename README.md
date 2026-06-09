@@ -36,16 +36,37 @@ source ~/.phpvm-src/linux/phpvm.sh
 ### Version Management
 
 ```bash
-phpvm install 8.3.0        # install a PHP version
-phpvm install 8.1.29       # install another version
+phpvm install 8.3.0        # install a specific PHP version
+phpvm install 8.3          # install latest 8.3.x patch (auto-resolves)
+phpvm install 7.3          # works for older lines (7.x, 5.x)
 phpvm use 8.3.0            # switch active version
-phpvm use 8.1.29           # switch to another
 phpvm list                 # list installed versions
 phpvm current              # show active version
 phpvm uninstall 8.1.29     # remove a version
 phpvm which                # path to active php binary
 phpvm ini                  # open php.ini in editor
 ```
+
+### Auto-Switch with `.phpvmrc` (Windows)
+
+Drop a `.phpvmrc` file in your project root containing the PHP version you want:
+
+```bash
+echo "8.3" > .phpvmrc
+```
+
+Then run `phpvm auto` from anywhere in the project — phpvm walks up to find the nearest `.phpvmrc` and prepends that version to your shell `PATH` (session only, your global `phpvm use` is untouched).
+
+For hands-off switching, install the PowerShell prompt hook:
+
+```powershell
+phpvm hook install      # adds a snippet to $PROFILE
+# restart PowerShell, then `cd` between projects - phpvm auto-switches per directory
+phpvm hook status       # check whether the hook is installed
+phpvm hook uninstall    # remove the hook
+```
+
+`.phpvmrc` accepts a full semver (`8.3.0`), a major.minor (`8.3` — picks the highest installed patch), or a leading `v` (`v8.3.0`). Lines starting with `#` are comments. If the version is not installed locally, phpvm warns but never auto-installs.
 
 ### Extension Management
 
@@ -143,6 +164,9 @@ phpvm/
 |---|---|---|
 | `PHPVM_DIR` | `~/.phpvm` | phpvm home directory |
 | `EDITOR` | `nano` | Editor used by `phpvm ini` (Linux) |
+| `PHPVM_SKIP_HASH` | _unset_ | When set to `1`, skip SHA-256 verification on Windows installs (use for content-rewriting corporate proxies) |
+| `PHPVM_NO_UPDATE_CHECK` | _unset_ | When set, skip the daily phpvm update check |
+| `PHPVM_AUTO_ACTIVE` | _unset_ | Internal: tracks the version currently pinned by `phpvm auto` in the current shell |
 
 ---
 

@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.5.0"
+$PHPVM_VERSION = "1.6.0"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -458,6 +458,183 @@ function Invoke-Ini {
         Start-Process notepad $ini
     } else {
         Write-Err "php.ini not found: $ini"
+    }
+}
+
+# ==============================================================================
+#  AUTO-SWITCH (.phpvmrc)
+# ==============================================================================
+
+# Walk from $startDir up to the drive root looking for a .phpvmrc file.
+function Find-PHPVMRC ([string]$startDir = '') {
+    if (-not $startDir) { $startDir = (Get-Location).Path }
+    $dir = $startDir
+    while ($dir) {
+        $rc = Join-Path $dir '.phpvmrc'
+        if (Test-Path $rc -PathType Leaf) { return $rc }
+        $parent = Split-Path $dir -Parent
+        if (-not $parent -or $parent -eq $dir) { return $null }
+        $dir = $parent
+    }
+    return $null
+}
+
+# Return the first non-comment, non-empty line of an rc file. Strips a leading
+# `v` (some users write `v8.3.0`) and any trailing whitespace.
+function Read-PHPVMRC ([string]$rcFile) {
+    if (-not (Test-Path $rcFile -PathType Leaf)) { return $null }
+    foreach ($line in (Get-Content $rcFile)) {
+        $line = ($line -replace '#.*$').Trim()
+        if ($line) { return ($line -replace '^v', '') }
+    }
+    return $null
+}
+
+# Map an rc version (8.3, 8.3.0, 5.6.40) onto an installed version directory.
+# Full semver passes through if installed; partial picks the highest installed
+# patch. Returns $null if no matching version is installed locally.
+function Resolve-RCVersion ([string]$requested) {
+    if (-not $requested) { return $null }
+    $target = "$VERSIONS_DIR\$requested"
+    if (Test-Path "$target\php.exe") { return $requested }
+
+    if ($requested -match '^\d+\.\d+$') {
+        $prefix = "$requested."
+        $match = Get-ChildItem $VERSIONS_DIR -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name.StartsWith($prefix) -and (Test-Path "$($_.FullName)\php.exe") } |
+            Sort-Object { [version]$_.Name } -Descending |
+            Select-Object -First 1
+        if ($match) { return $match.Name }
+    }
+    return $null
+}
+
+# Session-only PATH switch driven by .phpvmrc. Tracks the active version in
+# $env:PHPVM_AUTO_ACTIVE so repeat calls are no-ops and leaving a project
+# cleanly removes the prepended path.
+function Invoke-Auto ([switch]$Silent) {
+    $rcFile = Find-PHPVMRC
+
+    if (-not $rcFile) {
+        if ($env:PHPVM_AUTO_ACTIVE) {
+            $old = "$VERSIONS_DIR\$($env:PHPVM_AUTO_ACTIVE)"
+            $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and $_ -ne $old }) -join ';'
+            $env:PHPVM_AUTO_ACTIVE = ''
+            if (-not $Silent) { Write-Dim "Cleared auto PHP (no .phpvmrc upstream)." }
+        }
+        return
+    }
+
+    $requested = Read-PHPVMRC $rcFile
+    if (-not $requested) {
+        if (-not $Silent) { Write-Warn "$rcFile is empty or comment-only." }
+        return
+    }
+
+    $resolved = Resolve-RCVersion $requested
+    if (-not $resolved) {
+        if (-not $Silent) {
+            Write-Warn "PHP $requested (from $rcFile) is not installed."
+            Write-Dim "Run: phpvm install $requested"
+        }
+        return
+    }
+
+    if ($env:PHPVM_AUTO_ACTIVE -eq $resolved) { return }
+
+    if ($env:PHPVM_AUTO_ACTIVE) {
+        $old = "$VERSIONS_DIR\$($env:PHPVM_AUTO_ACTIVE)"
+        $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and $_ -ne $old }) -join ';'
+    }
+
+    $new = "$VERSIONS_DIR\$resolved"
+    $env:PATH = "$new;$env:PATH"
+    $env:PHPVM_AUTO_ACTIVE = $resolved
+    if (-not $Silent) {
+        Write-Ok "Auto-switched to PHP $resolved  (from $rcFile)"
+    }
+}
+
+# Manage the $PROFILE snippet that runs `phpvm auto -Silent` on each prompt.
+$script:PHPVM_HOOK_MARKER = '# phpvm-auto-hook (managed by `phpvm hook`)'
+
+function Get-PHPVMHookSnippet {
+    @"
+
+$($script:PHPVM_HOOK_MARKER)
+if (Get-Command phpvm -ErrorAction SilentlyContinue) {
+    `$global:__phpvm_prev_prompt = `$function:prompt
+    function global:prompt {
+        try { phpvm auto -Silent } catch {}
+        if (`$global:__phpvm_prev_prompt) { & `$global:__phpvm_prev_prompt }
+        else { "PS `$(`$ExecutionContext.SessionState.Path.CurrentLocation)`$('>' * (`$nestedPromptLevel + 1)) " }
+    }
+}
+"@
+}
+
+function Install-PHPVMHook {
+    $profilePath = $PROFILE.CurrentUserCurrentHost
+    if (-not (Test-Path $profilePath)) {
+        New-Item -ItemType File -Path $profilePath -Force | Out-Null
+    }
+    $existing = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+    if ($existing -and $existing.Contains($script:PHPVM_HOOK_MARKER)) {
+        Write-Warn "phpvm hook already installed in $profilePath"
+        return
+    }
+    Add-Content -Path $profilePath -Value (Get-PHPVMHookSnippet)
+    Write-Ok "Installed hook -> $profilePath"
+    Write-Dim "Open a new PowerShell window to activate."
+}
+
+function Uninstall-PHPVMHook {
+    $profilePath = $PROFILE.CurrentUserCurrentHost
+    if (-not (Test-Path $profilePath)) {
+        Write-Warn "No `$PROFILE found at $profilePath"
+        return
+    }
+    $content = Get-Content $profilePath -Raw
+    if (-not $content.Contains($script:PHPVM_HOOK_MARKER)) {
+        Write-Warn "phpvm hook not found in $profilePath"
+        return
+    }
+    # Strip from marker to the matching closing brace of the `if` block.
+    $pattern = "(?ms)\r?\n?" + [regex]::Escape($script:PHPVM_HOOK_MARKER) + ".*?^\}\s*"
+    $cleaned = [regex]::Replace($content, $pattern, '')
+    Set-Content -Path $profilePath -Value $cleaned -NoNewline
+    Write-Ok "Removed hook from $profilePath"
+    Write-Dim "Open a new PowerShell window for the change to take effect."
+}
+
+function Show-PHPVMHookStatus {
+    $profilePath = $PROFILE.CurrentUserCurrentHost
+    if (-not (Test-Path $profilePath)) {
+        Write-Dim "No `$PROFILE at $profilePath - hook not installed."
+        return
+    }
+    $content = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+    if ($content -and $content.Contains($script:PHPVM_HOOK_MARKER)) {
+        Write-Ok "Hook installed in $profilePath"
+    } else {
+        Write-Dim "Hook not installed. Run: phpvm hook install"
+    }
+}
+
+function Invoke-Hook ([string]$sub) {
+    switch ($sub.ToLower()) {
+        'install'   { Install-PHPVMHook }
+        'uninstall' { Uninstall-PHPVMHook }
+        'remove'    { Uninstall-PHPVMHook }
+        'status'    { Show-PHPVMHookStatus }
+        default     {
+            Write-Host ""
+            Write-Host "  phpvm hook - manage the PowerShell auto-switch hook" -ForegroundColor Cyan
+            Write-Host "    phpvm hook install    Add the prompt hook to `$PROFILE"
+            Write-Host "    phpvm hook uninstall  Remove the hook"
+            Write-Host "    phpvm hook status     Check whether the hook is installed"
+            Write-Host ""
+        }
     }
 }
 
@@ -993,6 +1170,12 @@ function Show-Help {
   COMPOSER
     phpvm composer                 Install Composer for active PHP version
 
+  AUTO-SWITCH (.phpvmrc)
+    phpvm auto                     Switch to the version named in .phpvmrc
+    phpvm hook install             Install the PowerShell prompt hook
+    phpvm hook uninstall           Remove the prompt hook
+    phpvm hook status              Check whether the hook is installed
+
   SELF UPDATE
     phpvm upgrade                  Upgrade phpvm to latest version
     phpvm version                  Show current phpvm version
@@ -1096,7 +1279,7 @@ function Invoke-Upgrade {
 if (-not $env:PHPVM_NO_ENTRY) {
     Initialize-PHPVM
 
-    $skipUpdateFor = @("", "help", "--help", "version", "-v", "list", "ls", "current", "which", "ini")
+    $skipUpdateFor = @("", "help", "--help", "version", "-v", "list", "ls", "current", "which", "ini", "auto", "hook")
     if ($Command.ToLower() -notin $skipUpdateFor) {
         Check-PHPVMUpdate
     }
@@ -1111,6 +1294,8 @@ if (-not $env:PHPVM_NO_ENTRY) {
         "ini"                           { Invoke-Ini }
         "fix-ini"                       { Invoke-FixIni }
         "ext"                           { Invoke-Ext $SubOrVer $Arg2 }
+        "auto"                          { Invoke-Auto }
+        "hook"                          { Invoke-Hook $SubOrVer }
         "composer"                      { Invoke-Composer }
         { $_ -in "upgrade", "update" }  { Invoke-Upgrade }
         { $_ -in "version", "-v" }      { Write-Ok "phpvm $PHPVM_VERSION" }
