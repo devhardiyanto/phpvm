@@ -86,6 +86,7 @@ _phpvm_use_path() {
 
 # ── Auto-switch (.phpvmrc) ────────────────────────────────────────────────────
 # Walk from $1 (default $PWD) up to / looking for .phpvmrc.
+# shellcheck disable=SC2120  # optional arg with PWD default - tests pass an arg.
 _phpvm_find_rc() {
     local dir="${1:-$PWD}"
     while [[ -n "$dir" ]]; do
