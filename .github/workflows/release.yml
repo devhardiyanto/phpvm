@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag matches version.txt
+        run: |
+          set -e
+          tag="${GITHUB_REF_NAME#v}"
+          file=$(tr -d '[:space:]' < version.txt)
+          if [ "$tag" != "$file" ]; then
+            echo "Tag '$tag' does not match version.txt '$file'."
+            exit 1
+          fi
+          echo "Tag matches version.txt -> $file"
+
+      - name: Generate release notes from commits since previous tag
+        id: notes
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || echo "")
+          {
+            echo "## Changes"
+            echo ""
+            if [ -n "$prev" ]; then
+              git log --pretty=format:'- %s' "$prev..${GITHUB_REF_NAME}"
+              echo ""
+              echo ""
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${GITHUB_REF_NAME}"
+            else
+              git log --pretty=format:'- %s' "${GITHUB_REF_NAME}"
+            fi
+          } > RELEASE_NOTES.md
+          echo "----- Generated notes -----"
+          cat RELEASE_NOTES.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file RELEASE_NOTES.md

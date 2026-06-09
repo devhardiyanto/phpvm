@@ -118,6 +118,34 @@ phpvm ext install mongodb 1.17.0   # specific version
 phpvm ext install xdebug
 ```
 
+### Laravel quick setup
+
+One command enables the extensions a typical Laravel app needs:
+
+```bash
+phpvm ext laravel              # full preset: minimal + intl, gd, opcache, pdo_pgsql, Redis (PECL)
+phpvm ext laravel minimal      # required only: openssl, pdo_mysql, mbstring, tokenizer, xml, ctype, fileinfo, bcmath, curl, zip, sodium
+phpvm ext laravel full         # explicit full (same as bare `phpvm ext laravel`)
+```
+
+Already-loaded extensions are reported as `already ON` and skipped. On Linux, extensions that aren't built into the active PHP are skipped with a `not built into this PHP` note rather than failed.
+
+### Composer
+
+```bash
+phpvm composer                 # installs composer.phar + shim into the active PHP version's bin dir
+```
+
+The installer signature is verified against `composer.github.io/installer.sig` (SHA-384) before execution. Composer lives **inside the active PHP version's directory** — switch versions with `phpvm use <other>` then re-run `phpvm composer` for that version.
+
+### Fix `php.ini` extension_dir
+
+```bash
+phpvm fix-ini                  # rewrites extension_dir to match PHP's compiled-in path
+```
+
+Useful when `extension_dir` was set by a previous install or copied from another machine. On Linux, the value comes from `PHP_EXTENSION_DIR`; on Windows, from `$VERSIONS_DIR\<ver>\ext`.
+
 ---
 
 ## How It Works
@@ -134,6 +162,7 @@ phpvm ext install xdebug
 - Stores versions in `~/.phpvm/versions/<version>/`
 - Switches via symlink (`~/.phpvm/current`) prepended to `$PATH`
 - Extensions installed via `pecl`, enabled via per-version `conf.d/` drop-ins
+- `phpvm composer` / `phpvm fix-ini` / `phpvm ext laravel` work the same as Windows since 1.7.0
 
 ---
 
