@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Keep GitHub Actions versions current. Updates arrive as PRs that bump the
+  # pinned SHA + comment to the latest release of each action used in workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+      - github-actions

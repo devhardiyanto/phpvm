@@ -1,0 +1,14 @@
+# Default owner — every PR auto-requests review from the maintainer.
+*                       @devhardiyanto
+
+# Security-sensitive paths. Branch protection is configured to require
+# code-owner review for these, so they cannot be merged without explicit
+# maintainer approval even if the rest of the PR passes review.
+/.github/workflows/     @devhardiyanto
+/.github/CODEOWNERS     @devhardiyanto
+/.github/dependabot.yml @devhardiyanto
+/linux/install.sh       @devhardiyanto
+/linux/phpvm.sh         @devhardiyanto
+/windows/install.ps1    @devhardiyanto
+/windows/phpvm.ps1      @devhardiyanto
+/version.txt            @devhardiyanto
