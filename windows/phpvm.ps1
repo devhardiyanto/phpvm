@@ -7,14 +7,15 @@
 param(
     [Parameter(Position = 0)] [string]$Command  = "",
     [Parameter(Position = 1)] [string]$SubOrVer = "",
-    [Parameter(Position = 2)] [string]$Arg2     = ""
+    [Parameter(Position = 2)] [string]$Arg2     = "",
+    [Parameter(Position = 3)] [string]$Arg3     = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.7.1"
+$PHPVM_VERSION = "1.7.2"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -1055,7 +1056,7 @@ function Ext-Laravel ([string]$preset = "full") {
     Write-Host ""
 }
 
-function Invoke-Ext ([string]$sub, [string]$name) {
+function Invoke-Ext ([string]$sub, [string]$name, [string]$ver = "") {
     switch ($sub.ToLower()) {
         { $_ -in "list", "ls" } { Ext-List }
         "loaded"                { Ext-Loaded }
@@ -1064,7 +1065,7 @@ function Invoke-Ext ([string]$sub, [string]$name) {
         "install" {
             if (-not $name) { Write-Err "Usage: phpvm ext install <name> [version]"; return }
             if ($name.ToLower() -eq "xdebug") { Install-XDebug }
-            else { Install-PECLExt $name $Arg2 }
+            else { Install-PECLExt $name $ver }
         }
         "info"    { if ($name) { Ext-Info $name } else { Write-Err "Usage: phpvm ext info <name>" } }
         "laravel" { Ext-Laravel $name }
@@ -1316,7 +1317,7 @@ if (-not $env:PHPVM_NO_ENTRY) {
         "which"                         { Invoke-Which }
         "ini"                           { Invoke-Ini }
         "fix-ini"                       { Invoke-FixIni }
-        "ext"                           { Invoke-Ext $SubOrVer $Arg2 }
+        "ext"                           { Invoke-Ext $SubOrVer $Arg2 $Arg3 }
         "auto"                          { Invoke-Auto }
         "hook"                          { Invoke-Hook $SubOrVer }
         "composer"                      { Invoke-Composer }
