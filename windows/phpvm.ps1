@@ -266,7 +266,7 @@ function Test-URLExists ([string]$url) {
                                -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
         return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)
     } catch {
-        # Some mirrors reject HEAD (405) — fall back to a 1-byte ranged GET.
+        # Some mirrors reject HEAD (405) -- fall back to a 1-byte ranged GET.
         try {
             $r = Invoke-WebRequest -Uri $url -Method Get -MaximumRedirection 5 `
                                    -UseBasicParsing -TimeoutSec 5 `
