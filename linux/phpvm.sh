@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.7.0"
+PHPVM_VERSION="1.7.1"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -557,22 +557,74 @@ phpvm_ext_install() {
         return 1
     }
 
+    _phpvm_ext_preflight "$name" || return 1
+
     local ver="${2:-}"
     if [[ -n "$ver" ]]; then
         _step "Installing $name-$ver via PECL ..."
         pecl install "$name-$ver" || {
             _err "Failed to install $name-$ver via PECL."
+            _phpvm_ext_runtime_notes "$name"
             return 1
         }
     else
         _step "Installing $name via PECL ..."
         pecl install "$name" || {
             _err "Failed to install $name via PECL."
+            _phpvm_ext_runtime_notes "$name"
             return 1
         }
     fi
 
     _ok "Done. Enable with: phpvm ext enable $name"
+    _phpvm_ext_runtime_notes "$name"
+}
+
+# Build-time prerequisites for specific extensions. Warn early instead of
+# letting `pecl install` fail mid-build with cryptic compiler errors.
+_phpvm_ext_preflight() {
+    local name="$1"
+    case "$name" in
+        sqlsrv|pdo_sqlsrv)
+            # unixODBC headers (sql.h / sqlext.h) are required to compile sqlsrv.
+            if command -v odbc_config &>/dev/null; then return 0; fi
+            local inc
+            for inc in /usr/include/sql.h /usr/local/include/sql.h \
+                       /opt/homebrew/include/sql.h /opt/homebrew/opt/unixodbc/include/sql.h \
+                       /usr/local/opt/unixodbc/include/sql.h; do
+                [[ -f "$inc" ]] && return 0
+            done
+            _warn "unixODBC development headers not found — required to build $name."
+            local pm
+            pm=$(_phpvm_detect_os)
+            case "$pm" in
+                apt)    _dim "Install: sudo apt-get install -y unixodbc-dev" ;;
+                dnf)    _dim "Install: sudo dnf install -y unixODBC-devel" ;;
+                yum)    _dim "Install: sudo yum install -y unixODBC-devel" ;;
+                pacman) _dim "Install: sudo pacman -S --needed unixodbc" ;;
+                zypper) _dim "Install: sudo zypper install -y unixODBC-devel" ;;
+                brew)   _dim "Install: brew install unixodbc" ;;
+                *)      _dim "Install unixODBC development headers via your package manager." ;;
+            esac
+            _dim "Then retry: phpvm ext install $name"
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# Post-install advisories for extensions that need extra system components.
+_phpvm_ext_runtime_notes() {
+    local name="$1"
+    case "$name" in
+        sqlsrv|pdo_sqlsrv)
+            echo ""
+            _dim "Note: $name also requires the Microsoft ODBC Driver for SQL Server"
+            _dim "to actually connect at runtime. Install (one-off, system-wide):"
+            _dim "  https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server"
+            _dim "Setup guide: https://learn.microsoft.com/sql/connect/php/step-1-configure-development-environment-for-php-development"
+            ;;
+    esac
 }
 
 phpvm_ext_enable() {

@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.7.0"
+$PHPVM_VERSION = "1.7.1"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -259,13 +259,21 @@ function Get-XDebugHash ([string]$dllUrl) {
 }
 
 function Test-URLExists ([string]$url) {
+    $ProgressPreference = "SilentlyContinue"
+    # HEAD via Invoke-WebRequest follows 30x redirects (windows.php.net -> downloads.php.net).
     try {
-        $req = [System.Net.WebRequest]::Create($url)
-        $req.Method = "HEAD"
-        $res = $req.GetResponse()
-        $res.Close()
-        return $true
-    } catch { return $false }
+        $r = Invoke-WebRequest -Uri $url -Method Head -MaximumRedirection 5 `
+                               -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)
+    } catch {
+        # Some mirrors reject HEAD (405) -- fall back to a 1-byte ranged GET.
+        try {
+            $r = Invoke-WebRequest -Uri $url -Method Get -MaximumRedirection 5 `
+                                   -UseBasicParsing -TimeoutSec 5 `
+                                   -Headers @{ Range = "bytes=0-0" } -ErrorAction Stop
+            return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)
+        } catch { return $false }
+    }
 }
 
 # ==============================================================================
@@ -813,6 +821,21 @@ function Install-PECLExt ([string]$extName, [string]$requestedVer = "") {
 
     Remove-Item $tempZip, $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
     Write-Ok "Done. Enable with: phpvm ext enable $extName"
+
+    Show-ExtRuntimeNotes $extName
+}
+
+# Post-install runtime advisories for extensions that need extra system components.
+function Show-ExtRuntimeNotes ([string]$extName) {
+    switch -Regex ($extName.ToLower()) {
+        '^(sqlsrv|pdo_sqlsrv)$' {
+            Write-Host ""
+            Write-Dim "Note: sqlsrv / pdo_sqlsrv also requires the Microsoft ODBC Driver"
+            Write-Dim "for SQL Server on this machine. Install (one-off, system-wide):"
+            Write-Dim "  https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server"
+            Write-Dim "Setup guide: https://learn.microsoft.com/sql/connect/php/step-1-configure-development-environment-for-php-development"
+        }
+    }
 }
 
 function Install-XDebug {
