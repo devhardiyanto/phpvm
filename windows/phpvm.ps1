@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.8.0"
+$PHPVM_VERSION = "1.8.1"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -1122,13 +1122,15 @@ function Invoke-Composer {
         Write-Warn "openssl enabled. If Composer install fails, restart terminal first then re-run 'phpvm composer'."
     }
 
-    # One composer per PHP version dir; switch versions -> re-run `phpvm composer`.
-    $phpRoot    = Split-Path $info.Exe -Parent
-    $composerPhar = "$phpRoot\composer.phar"
-    $composerBat  = "$phpRoot\composer.bat"
+    # One global composer that follows the active PHP version: the phar lives in
+    # $PHPVM_DIR and the shim sits in $PHPVM_BIN (already on PATH) and calls
+    # whatever `php` resolves to.
+    $composerPhar = "$PHPVM_DIR\composer.phar"
+    $composerBat  = "$PHPVM_BIN\composer.bat"
 
     if (Test-Path $composerBat) {
         Write-Warn "Composer already installed at $composerBat"
+        Write-Dim "It follows your active PHP version automatically."
         Write-Dim "Run: composer --version"
         return
     }
@@ -1157,8 +1159,9 @@ function Invoke-Composer {
     Write-Ok "Hash verified."
 
     Write-Step "Installing Composer ..."
-    Push-Location $phpRoot
-    & $info.Exe $installerFile --quiet
+    if (-not (Test-Path $PHPVM_BIN)) { New-Item -ItemType Directory -Path $PHPVM_BIN -Force | Out-Null }
+    Push-Location $PHPVM_DIR
+    & $info.Exe $installerFile --quiet --filename composer.phar
     Pop-Location
 
     if (-not (Test-Path $composerPhar)) {
@@ -1169,20 +1172,20 @@ function Invoke-Composer {
 
     Remove-Item $installerFile -Force
 
-    # Shim so `composer` works from CMD + PowerShell without PATH gymnastics.
+    # Shim in $PHPVM_BIN (on PATH) calls `php` from PATH - i.e. the active
+    # version - so composer follows `phpvm use` without reinstalling.
     $bat = @"
 @echo off
-php "%~dp0composer.phar" %*
+php "$composerPhar" %*
 "@
     $bat | Set-Content $composerBat -Encoding ASCII
-    Write-Ok "Composer installed!"
+    Write-Ok "Composer installed (global)!"
     Write-Ok "  phar : $composerPhar"
     Write-Ok "  shim : $composerBat"
     Write-Host ""
-    & $info.Exe "$phpRoot\composer.phar" --version | ForEach-Object { Write-Host "  $_" }
+    & $info.Exe $composerPhar --version | ForEach-Object { Write-Host "  $_" }
     Write-Host ""
-    Write-Dim "Note: composer.bat is inside the PHP version folder."
-    Write-Dim "If you switch PHP version, run 'phpvm composer' again for that version."
+    Write-Dim "Composer follows your active PHP version - no need to re-run after 'phpvm use'."
 }
 
 function Show-Help {
