@@ -69,14 +69,14 @@ PHPEOF
     [[ "$output" == *"No active PHP version"* ]]
 }
 
-@test "composer: no-op when shim + phar already present" {
+@test "composer: no-op when global shim + phar already present" {
     _fake_php_install 8.3.0
-    local bin="$PHPVM_VERSIONS/8.3.0/bin"
-    touch "$bin/composer.phar"
-    cat > "$bin/composer" <<'EOF'
+    mkdir -p "$PHPVM_BIN"
+    touch "$PHPVM_DIR/composer.phar"
+    cat > "$PHPVM_BIN/composer" <<'EOF'
 #!/usr/bin/env sh
 EOF
-    chmod +x "$bin/composer"
+    chmod +x "$PHPVM_BIN/composer"
     run phpvm_composer
     [ "$status" -eq 0 ]
     [[ "$output" == *"already installed"* ]]

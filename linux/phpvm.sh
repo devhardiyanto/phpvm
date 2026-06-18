@@ -10,10 +10,11 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.8.0"
+PHPVM_VERSION="1.8.1"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
+PHPVM_BIN="$PHPVM_DIR/bin"          # global shims (composer) — always on PATH
 PHPVM_CACHE="$PHPVM_DIR/cache"
 PHPVM_LOG="$PHPVM_DIR/build.log"
 PHPVM_UPDATE_URL="https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
@@ -76,16 +77,27 @@ _phpvm_check_update() {
 
 
 _phpvm_init() {
-    mkdir -p "$PHPVM_VERSIONS" "$PHPVM_CACHE"
+    mkdir -p "$PHPVM_VERSIONS" "$PHPVM_CACHE" "$PHPVM_BIN"
 }
 
 # ── PATH management ───────────────────────────────────────────────────────────
-# Sets $PHPVM_CURRENT/bin as the first entry in PATH
+# Order: $PHPVM_BIN (global shims like composer) before $PHPVM_CURRENT/bin so a
+# global composer always wins over any stale per-version shim; both ahead of the
+# rest of PATH. `php`, `pecl`, etc. still resolve from the active version's bin.
 _phpvm_use_path() {
     local bin="$PHPVM_CURRENT/bin"
     # Remove any existing phpvm path entries
     PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$PHPVM_DIR" | paste -sd ':')
-    export PATH="$bin:$PATH"
+    export PATH="$PHPVM_BIN:$bin:$PATH"
+}
+
+# Ensure $PHPVM_BIN is on PATH even when no version is active yet, so the global
+# `composer` shim is reachable (and gives a clean error) regardless.
+_phpvm_ensure_bin_path() {
+    case ":$PATH:" in
+        *":$PHPVM_BIN:"*) ;;
+        *) export PATH="$PHPVM_BIN:$PATH" ;;
+    esac
 }
 
 # ── Auto-switch (.phpvmrc) ────────────────────────────────────────────────────
@@ -890,22 +902,22 @@ phpvm_ext() {
 }
 
 # ==============================================================================
-#  COMPOSER (one composer.phar per active PHP version)
+#  COMPOSER (one global composer that follows the active PHP version)
 # ==============================================================================
 phpvm_composer() {
     local cur
     cur=$(_phpvm_current_version)
     [[ -z "$cur" ]] && { _err "No active PHP version. Run: phpvm use <version>"; return 1; }
 
-    local php_root="$PHPVM_VERSIONS/$cur"
-    local php_bin="$php_root/bin/php"
+    local php_bin="$PHPVM_VERSIONS/$cur/bin/php"
     [[ ! -x "$php_bin" ]] && { _err "php binary not found: $php_bin"; return 1; }
 
-    local phar="$php_root/bin/composer.phar"
-    local shim="$php_root/bin/composer"
+    local phar="$PHPVM_DIR/composer.phar"
+    local shim="$PHPVM_BIN/composer"
 
     if [[ -x "$shim" && -f "$phar" ]]; then
         _warn "Composer already installed at $shim"
+        _dim "It follows your active PHP version automatically."
         _dim "Run: composer --version"
         return 0
     fi
@@ -946,8 +958,8 @@ phpvm_composer() {
     _ok "Hash verified."
 
     _step "Installing Composer ..."
-    mkdir -p "$php_root/bin"
-    (cd "$php_root/bin" && "$php_bin" "$tmp" --quiet --filename=composer.phar) || {
+    mkdir -p "$PHPVM_BIN"
+    (cd "$PHPVM_DIR" && "$php_bin" "$tmp" --quiet --filename=composer.phar) || {
         _err "Composer installer failed."
         rm -f "$tmp"
         return 1
@@ -956,21 +968,21 @@ phpvm_composer() {
 
     [[ ! -f "$phar" ]] && { _err "composer.phar not created at $phar"; return 1; }
 
-    # POSIX shim — works in bash/zsh/sh.
+    # POSIX shim — execs the *current* PHP, so composer tracks `phpvm use`
+    # without reinstalling. Works in bash/zsh/sh.
     cat > "$shim" <<EOF
 #!/usr/bin/env sh
-exec "$php_bin" "$phar" "\$@"
+exec "$PHPVM_CURRENT/bin/php" "$phar" "\$@"
 EOF
     chmod +x "$shim"
 
-    _ok "Composer installed!"
+    _ok "Composer installed (global)!"
     _ok "  phar : $phar"
     _ok "  shim : $shim"
     echo ""
     "$php_bin" "$phar" --version 2>/dev/null | sed 's/^/  /'
     echo ""
-    _dim "Note: composer is installed inside the PHP $cur bin dir."
-    _dim "After 'phpvm use <other>', re-run 'phpvm composer' for that version."
+    _dim "Composer follows your active PHP version — no need to re-run after 'phpvm use'."
 }
 
 # ==============================================================================
@@ -1280,9 +1292,12 @@ phpvm() {
 # Tests / external sourcing can set PHPVM_NO_INIT=1 to skip the source-time
 # side effects below (PATH manipulation + hook registration).
 if [[ -z "${PHPVM_NO_INIT:-}" ]]; then
-    # Auto-activate current version if set (on shell load)
+    # Auto-activate current version if set (on shell load); otherwise still make
+    # sure the global shim dir is on PATH.
     if [[ -L "$PHPVM_CURRENT" ]]; then
         _phpvm_use_path
+    else
+        _phpvm_ensure_bin_path
     fi
 
     # Register .phpvmrc auto-switch hook if user opted in.

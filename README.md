@@ -165,10 +165,10 @@ Already-loaded extensions are reported as `already ON` and skipped. On Linux, ex
 ### Composer
 
 ```bash
-phpvm composer                 # installs composer.phar + shim into the active PHP version's bin dir
+phpvm composer                 # installs a single global composer that follows the active PHP version
 ```
 
-The installer signature is verified against `composer.github.io/installer.sig` (SHA-384) before execution. Composer lives **inside the active PHP version's directory** — switch versions with `phpvm use <other>` then re-run `phpvm composer` for that version.
+The installer signature is verified against `composer.github.io/installer.sig` (SHA-384) before execution. Composer is installed **once** — `composer.phar` in `~/.phpvm/` and a shim in `~/.phpvm/bin/` (on PATH) that runs whatever PHP is active. Switch versions with `phpvm use <other>` and the same `composer` keeps working; no need to re-run `phpvm composer`. (Composer 2.x requires PHP ≥ 7.2.5, so an extremely old active version won't run the latest composer.)
 
 ### Fix `php.ini` extension_dir
 
@@ -239,7 +239,8 @@ phpvm/
 │   └── 8.1.29/
 ├── current -> versions/8.3.0   (junction on Windows, symlink on Linux)
 ├── cache/             # Linux: cached source tarballs
-├── bin/               # Windows: phpvm.cmd + phpvm.ps1 shim
+├── composer.phar      # global Composer (follows the active version)
+├── bin/               # on PATH: composer shim (+ phpvm.cmd / phpvm.ps1 on Windows)
 ├── phpvm.ps1          # Windows: main script
 └── phpvm.sh           # Linux: main script (sourced in .bashrc)
 ```
