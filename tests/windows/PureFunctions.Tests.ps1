@@ -77,6 +77,27 @@ Describe 'Resolve-LatestPatch' {
         Resolve-LatestPatch '8.9' | Should -BeNullOrEmpty
     }
 
+    It 'Resolves a bare major to the highest overall patch' {
+        Mock -CommandName Get-WebString -MockWith {
+            @'
+<a href="php-8.3.31-Win32-vs16-x64.zip">...</a>
+<a href="php-8.4.22-Win32-vs17-x64.zip">...</a>
+<a href="php-8.5.7-Win32-vs17-x64.zip">...</a>
+'@
+        }
+        Resolve-LatestPatch '8' | Should -Be '8.5.7'
+    }
+
+    It 'Does not let 8.3 match 8.30.x' {
+        Mock -CommandName Get-WebString -MockWith {
+            @'
+<a href="php-8.3.5-Win32-vs16-x64.zip">...</a>
+<a href="php-8.30.1-Win32-vs16-x64.zip">...</a>
+'@
+        }
+        Resolve-LatestPatch '8.3' | Should -Be '8.3.5'
+    }
+
     It 'Matches uppercase VC15 used by PHP 7.x archives' {
         Mock -CommandName Get-WebString -MockWith {
             @'
@@ -98,6 +119,44 @@ Describe 'Resolve-LatestPatch' {
         }
         Resolve-LatestPatch '7.0' | Should -Be '7.0.33'
         Resolve-LatestPatch '5.6' | Should -Be '5.6.40'
+    }
+}
+
+Describe 'Get-Levenshtein' {
+    BeforeAll {
+        . $PSScriptRoot/Common.ps1
+    }
+
+    It 'Returns 0 for identical strings' {
+        Get-Levenshtein 'install' 'install' | Should -Be 0
+    }
+
+    It 'Counts single-edit typos' {
+        Get-Levenshtein 'intsall' 'install' | Should -Be 2
+        Get-Levenshtein 'usee'    'use'     | Should -Be 1
+    }
+
+    It 'Equals the other length when one string is empty' {
+        Get-Levenshtein '' 'list' | Should -Be 4
+        Get-Levenshtein 'list' '' | Should -Be 4
+    }
+}
+
+Describe 'Invoke-Unknown' {
+    BeforeAll {
+        . $PSScriptRoot/Common.ps1
+    }
+
+    It 'Suggests the nearest command for a close typo' {
+        $out = Invoke-Unknown 'intsall' 6>&1 | Out-String
+        $out | Should -Match "is not a phpvm command"
+        $out | Should -Match "Did you mean 'install'\?"
+    }
+
+    It 'Omits a suggestion when nothing is close' {
+        $out = Invoke-Unknown 'zzzzzz' 6>&1 | Out-String
+        $out | Should -Match "is not a phpvm command"
+        $out | Should -Not -Match "Did you mean"
     }
 }
 

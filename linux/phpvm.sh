@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.7.2"
+PHPVM_VERSION="1.8.0"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -21,11 +21,15 @@ PHPVM_LAST_CHECK="$PHPVM_DIR/.last_update_check"
 PHPVM_CHECK_INTERVAL=86400  # 24 hours
 
 # ── Colors ────────────────────────────────────────────────────────────────────
-_ok()   { echo -e "  \033[32m$*\033[0m"; }
-_err()  { echo -e "  \033[31m[error] $*\033[0m" >&2; }
-_step() { echo -e "  \033[36m> $*\033[0m"; }
-_warn() { echo -e "  \033[33m[warn] $*\033[0m"; }
-_dim()  { echo -e "  \033[90m$*\033[0m"; }
+# printf (not echo -e): the message is passed through %s so backslashes in the
+# text — e.g. the trailing `\` of a multi-line shell command — stay literal and
+# never merge with the trailing \033[0m reset. echo -e merged them, leaking
+# `\033[0m` into the output on some shells.
+_ok()   { printf '  \033[32m%s\033[0m\n'         "$*"; }
+_err()  { printf '  \033[31m[error] %s\033[0m\n' "$*" >&2; }
+_step() { printf '  \033[36m> %s\033[0m\n'       "$*"; }
+_warn() { printf '  \033[33m[warn] %s\033[0m\n'  "$*"; }
+_dim()  { printf '  \033[90m%s\033[0m\n'         "$*"; }
 
 # ── Update checker (once per day, via version.txt) ───────────────────────────
 _phpvm_check_update() {
@@ -185,6 +189,17 @@ _phpvm_auto() {
     return 0
 }
 
+# ── Is phpvm sourced from a shell rc? ─────────────────────────────────────────
+# True if any login rc already sources phpvm.sh, meaning `use` will persist
+# across sessions and the "add to your rc" warning would just be noise.
+_phpvm_in_rc() {
+    local f
+    for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.bash_profile"; do
+        [[ -f "$f" ]] && grep -Fq "$PHPVM_DIR/phpvm.sh" "$f" && return 0
+    done
+    return 1
+}
+
 # ── Get current version ───────────────────────────────────────────────────────
 _phpvm_current_version() {
     if [[ -L "$PHPVM_CURRENT" ]]; then
@@ -269,12 +284,57 @@ _phpvm_cpus() {
     nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2
 }
 
+# Resolve a partial version to the highest published patch on php.net.
+#   "8"   -> latest 8.x   (e.g. 8.5.7)
+#   "8.3" -> latest 8.3.x (e.g. 8.3.31)
+# A full "x.y.z" passes through untouched. Echoes the resolved version on
+# success; non-zero exit if nothing matched or the network was unreachable.
+_phpvm_resolve_remote() {
+    local req="$1"
+    [[ "$req" =~ ^[0-9]+$ || "$req" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "$req"; return 0; }
+
+    local major="${req%%.*}"
+    local api="https://www.php.net/releases/index.php?json&max=100&version=$major"
+    local json
+    if command -v curl &>/dev/null; then
+        json=$(curl -fsSL --max-time 10 "$api" 2>/dev/null)
+    elif command -v wget &>/dev/null; then
+        json=$(wget -qO- --timeout=10 "$api" 2>/dev/null)
+    fi
+    [[ -z "$json" ]] && return 1
+
+    # Top-level JSON keys are "x.y.z" version strings; keep the ones whose
+    # prefix matches the request (the (\.|$) guard stops 8.3 matching 8.30.x).
+    local match
+    match=$(printf '%s\n' "$json" \
+        | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' \
+        | tr -d '"' \
+        | grep -E "^${req//./\\.}(\.|$)" \
+        | sort -V | tail -1)
+    [[ -n "$match" ]] || return 1
+    echo "$match"
+}
+
 # ==============================================================================
 #  phpvm install <version>
 # ==============================================================================
 phpvm_install() {
     local ver="$1"
     [[ -z "$ver" ]] && { _err "Usage: phpvm install <version>  (e.g. phpvm install 8.3.0)"; return 1; }
+
+    # Partial version: "8" -> latest 8.x, "8.3" -> latest 8.3.x.
+    if [[ "$ver" =~ ^[0-9]+$ || "$ver" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        _step "Resolving latest patch for PHP $ver ..."
+        local resolved
+        if resolved=$(_phpvm_resolve_remote "$ver") && [[ -n "$resolved" ]]; then
+            _ok "Latest PHP $ver -> $resolved"
+            ver="$resolved"
+        else
+            _err "Could not resolve a release for PHP $ver."
+            _dim "Browse available versions: https://www.php.net/releases/"
+            return 1
+        fi
+    fi
 
     local target="$PHPVM_VERSIONS/$ver"
 
@@ -400,7 +460,9 @@ phpvm_install() {
     rm -rf "$src_dir"
 
     _ok "PHP $ver installed successfully."
-    _dim "Activate with: phpvm use $ver"
+
+    # Activate the freshly built version right away (point 4 — auto-use).
+    phpvm_use "$ver"
 }
 
 # ==============================================================================
@@ -427,8 +489,10 @@ phpvm_use() {
     _phpvm_use_path
 
     _ok "Now using PHP $ver"
-    php --version 2>/dev/null | head -1
-    _warn "To persist across sessions, ensure your shell rc sources phpvm."
+    php --version 2>/dev/null | head -1 | sed 's/^/  /'
+    # Only nudge if phpvm isn't wired into a shell rc yet — otherwise this is
+    # already persistent and the warning is just noise on every `use`.
+    _phpvm_in_rc || _warn "To persist across sessions, add to your shell rc: source \"$PHPVM_DIR/phpvm.sh\""
 }
 
 # ==============================================================================
@@ -467,7 +531,7 @@ phpvm_current() {
     if [[ -n "$cur" ]]; then
         echo ""
         echo -e "  \033[32mActive: $cur\033[0m"
-        php --version 2>/dev/null
+        php --version 2>/dev/null | sed 's/^/  /'
         echo ""
     else
         _warn "No PHP version active. Run: phpvm use <version>"
@@ -903,7 +967,7 @@ EOF
     _ok "  phar : $phar"
     _ok "  shim : $shim"
     echo ""
-    "$php_bin" "$phar" --version 2>/dev/null
+    "$php_bin" "$phar" --version 2>/dev/null | sed 's/^/  /'
     echo ""
     _dim "Note: composer is installed inside the PHP $cur bin dir."
     _dim "After 'phpvm use <other>', re-run 'phpvm composer' for that version."
@@ -1137,6 +1201,52 @@ phpvm_hook() {
 }
 
 # ==============================================================================
+#  DID-YOU-MEAN (unknown command handling)
+# ==============================================================================
+# Iterative Levenshtein distance between $1 and $2 (two-row, O(n) memory).
+_phpvm_levenshtein() {
+    local a="$1" b="$2"
+    local la=${#a} lb=${#b}
+    (( la == 0 )) && { echo "$lb"; return; }
+    (( lb == 0 )) && { echo "$la"; return; }
+    local i j cost prev cur del ins sub min
+    local -a row
+    for (( j = 0; j <= lb; j++ )); do row[j]=$j; done
+    for (( i = 1; i <= la; i++ )); do
+        prev=${row[0]}
+        row[0]=$i
+        for (( j = 1; j <= lb; j++ )); do
+            cur=${row[j]}
+            if [[ "${a:i-1:1}" == "${b:j-1:1}" ]]; then cost=0; else cost=1; fi
+            del=$(( row[j] + 1 )); ins=$(( row[j-1] + 1 )); sub=$(( prev + cost ))
+            min=$del
+            (( ins < min )) && min=$ins
+            (( sub < min )) && min=$sub
+            row[j]=$min
+            prev=$cur
+        done
+    done
+    echo "${row[lb]}"
+}
+
+# Canonical command list (includes aliases) for suggestions.
+_PHPVM_COMMANDS="install use list ls current uninstall remove which ini deps ext composer fix-ini auto hook upgrade update version help"
+
+# Unknown command: suggest the nearest match instead of dumping the full help.
+_phpvm_unknown() {
+    local cmd="$1"
+    local best="" bestd=99 c d
+    for c in $_PHPVM_COMMANDS; do
+        d=$(_phpvm_levenshtein "$cmd" "$c")
+        (( d < bestd )) && { bestd=$d; best=$c; }
+    done
+    _err "'$cmd' is not a phpvm command."
+    (( bestd <= 2 )) && _dim "Did you mean '$best'?"
+    _dim "Run 'phpvm help' to see all commands."
+    return 1
+}
+
+# ==============================================================================
 #  ENTRY POINT
 # ==============================================================================
 phpvm() {
@@ -1163,7 +1273,7 @@ phpvm() {
         upgrade|update)        phpvm_upgrade ;;
         version|-v)            _ok "phpvm $PHPVM_VERSION" ;;
         help|--help)           phpvm_help ;;
-        *)                     phpvm_help ;;
+        *)                     _phpvm_unknown "$cmd" ;;
     esac
 }
 

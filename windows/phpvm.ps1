@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.7.2"
+$PHPVM_VERSION = "1.8.0"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -164,12 +164,14 @@ function Resolve-PHPURL ([string]$ver) {
     return $null
 }
 
-# "8.3" -> highest "8.3.x" published on windows.php.net.
-function Resolve-LatestPatch ([string]$majorMinor) {
-    $patches = @()
-    $escaped = [regex]::Escape($majorMinor)
-    # (?i) - older archives use uppercase (VC11/VC14/VC15); newer 8.x lowercase (vs16/vs17).
-    $pattern = "(?i)php-($escaped\.\d+)-(?:nts-)?Win32-(?:vs1[567]|vc1[145])-x64\.zip"
+# Resolve a partial version to the highest patch published on windows.php.net.
+#   "8"   -> latest 8.x   (e.g. 8.5.7)
+#   "8.3" -> latest 8.3.x (e.g. 8.3.31)
+function Resolve-LatestPatch ([string]$request) {
+    $found = @()
+    # Capture the full x.y.z from any Win32 build name.
+    # (?i) - older archives use uppercase (VC11/VC14/VC15); newer lowercase (vs16/vs17).
+    $pattern = '(?i)php-(\d+\.\d+\.\d+)-(?:nts-)?Win32-(?:vs1[567]|vc1[145])-x64\.zip'
 
     foreach ($index in @(
         "https://windows.php.net/downloads/releases/"
@@ -179,12 +181,17 @@ function Resolve-LatestPatch ([string]$majorMinor) {
             $html = Get-WebString $index 5
         } catch { continue }
         foreach ($m in [regex]::Matches($html, $pattern)) {
-            $patches += $m.Groups[1].Value
+            $found += $m.Groups[1].Value
         }
     }
 
-    if (-not $patches) { return $null }
-    return ($patches | Sort-Object -Unique | Sort-Object { [version]$_ } -Descending | Select-Object -First 1)
+    if (-not $found) { return $null }
+    # Keep versions whose prefix matches the request. The '(\.|$)' guard stops
+    # "8.3" from matching "8.30.x" and "8" from matching "18.x".
+    $filter = '^' + [regex]::Escape($request) + '(\.|$)'
+    $cand   = $found | Where-Object { $_ -match $filter }
+    if (-not $cand) { return $null }
+    return ($cand | Sort-Object -Unique | Sort-Object { [version]$_ } -Descending | Select-Object -First 1)
 }
 
 # -- Junction helpers ----------------------------------------------------------
@@ -284,8 +291,8 @@ function Test-URLExists ([string]$url) {
 function Invoke-Install ([string]$ver) {
     if (-not $ver) { Write-Err "Usage: phpvm install <version>  (e.g. phpvm install 8.3.0)"; return }
 
-    # Allow "8.3" -> resolve to latest patch
-    if ($ver -match '^\d+\.\d+$') {
+    # Allow "8" -> latest 8.x and "8.3" -> latest 8.3.x.
+    if ($ver -match '^\d+(\.\d+)?$') {
         Write-Step "Resolving latest patch for PHP $ver ..."
         $resolved = Resolve-LatestPatch $ver
         if (-not $resolved) {
@@ -367,7 +374,9 @@ function Invoke-Install ([string]$ver) {
     }
 
     Write-Ok "PHP $ver installed successfully."
-    Write-Dim "Activate with: phpvm use $ver"
+
+    # Activate the freshly installed version right away (point 4 - auto-use).
+    Invoke-Use $ver
 }
 
 function Invoke-Use ([string]$ver) {
@@ -429,7 +438,7 @@ function Invoke-Current {
         Write-Host ""
         Write-Host "  Active: $cur" -ForegroundColor Green
         try {
-            & "$CURRENT_LINK\php.exe" --version 2>$null
+            & "$CURRENT_LINK\php.exe" --version 2>$null | ForEach-Object { Write-Host "  $_" }
         } catch {
             return
         }
@@ -1170,7 +1179,7 @@ php "%~dp0composer.phar" %*
     Write-Ok "  phar : $composerPhar"
     Write-Ok "  shim : $composerBat"
     Write-Host ""
-    & $info.Exe "$phpRoot\composer.phar" --version
+    & $info.Exe "$phpRoot\composer.phar" --version | ForEach-Object { Write-Host "  $_" }
     Write-Host ""
     Write-Dim "Note: composer.bat is inside the PHP version folder."
     Write-Dim "If you switch PHP version, run 'phpvm composer' again for that version."
@@ -1299,6 +1308,44 @@ function Invoke-Upgrade {
 }
 
 
+# -- Did-you-mean (unknown command handling) -----------------------------------
+# Iterative Levenshtein distance (two-row, O(n) memory).
+function Get-Levenshtein ([string]$a, [string]$b) {
+    $la = $a.Length; $lb = $b.Length
+    if ($la -eq 0) { return $lb }
+    if ($lb -eq 0) { return $la }
+    $row = 0..$lb
+    for ($i = 1; $i -le $la; $i++) {
+        $prev = $row[0]
+        $row[0] = $i
+        for ($j = 1; $j -le $lb; $j++) {
+            $cur  = $row[$j]
+            $cost = if ($a[$i - 1] -eq $b[$j - 1]) { 0 } else { 1 }
+            $del  = $row[$j] + 1
+            $ins  = $row[$j - 1] + 1
+            $sub  = $prev + $cost
+            $row[$j] = [Math]::Min([Math]::Min($del, $ins), $sub)
+            $prev = $cur
+        }
+    }
+    return $row[$lb]
+}
+
+# Unknown command: suggest the nearest match instead of dumping the full help.
+function Invoke-Unknown ([string]$cmd) {
+    $cmds = @("install","use","list","ls","current","uninstall","remove",
+              "which","ini","fix-ini","ext","composer","auto","hook",
+              "upgrade","update","version","help")
+    $best = ""; $bestd = 99
+    foreach ($c in $cmds) {
+        $d = Get-Levenshtein $cmd.ToLower() $c
+        if ($d -lt $bestd) { $bestd = $d; $best = $c }
+    }
+    Write-Err "'$cmd' is not a phpvm command."
+    if ($bestd -le 2) { Write-Dim "Did you mean '$best'?" }
+    Write-Dim "Run 'phpvm help' to see all commands."
+}
+
 # Tests dot-source this file and set $env:PHPVM_NO_ENTRY=1 to skip the entry point.
 if (-not $env:PHPVM_NO_ENTRY) {
     Initialize-PHPVM
@@ -1324,6 +1371,7 @@ if (-not $env:PHPVM_NO_ENTRY) {
         { $_ -in "upgrade", "update" }  { Invoke-Upgrade }
         { $_ -in "version", "-v" }      { Write-Ok "phpvm $PHPVM_VERSION" }
         { $_ -in "help", "--help" }     { Show-Help }
-        default                         { Show-Help }
+        ""                              { Show-Help }
+        default                         { Invoke-Unknown $Command }
     }
 }

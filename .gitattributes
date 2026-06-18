@@ -1,0 +1,5 @@
+# Shell scripts and bats tests must stay LF — CRLF breaks them on Linux/macOS
+# (`bad interpreter: /usr/bin/env bash^M`). Everything else keeps git's default
+# handling (LF in the repo, autocrlf per developer) so CI greps see no CR.
+*.sh   text eol=lf
+*.bats text eol=lf

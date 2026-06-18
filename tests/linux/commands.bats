@@ -182,3 +182,55 @@ EOF
     [ "$status" -ne 0 ]
     [[ "$output" == *"No active PHP version"* ]]
 }
+
+# ---------- did-you-mean ----------
+
+@test "levenshtein: known distances" {
+    [ "$(_phpvm_levenshtein kitten sitting)" -eq 3 ]
+    [ "$(_phpvm_levenshtein install install)" -eq 0 ]
+    [ "$(_phpvm_levenshtein intsall install)" -eq 2 ]
+    [ "$(_phpvm_levenshtein '' list)" -eq 4 ]
+}
+
+@test "unknown: suggests nearest command for a close typo" {
+    run phpvm intsall
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"is not a phpvm command"* ]]
+    [[ "$output" == *"Did you mean 'install'?"* ]]
+}
+
+@test "unknown: no suggestion when nothing is close" {
+    run phpvm zzzzzz
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"is not a phpvm command"* ]]
+    [[ "$output" != *"Did you mean"* ]]
+}
+
+# ---------- partial version resolution ----------
+
+@test "resolve: full x.y.z passes through without network" {
+    run _phpvm_resolve_remote 8.3.10
+    [ "$status" -eq 0 ]
+    [ "$output" = "8.3.10" ]
+}
+
+@test "resolve: major.minor picks highest patch (stubbed curl)" {
+    curl() { printf '%s' '{"8.3.31":{},"8.3.9":{},"8.4.22":{}}'; }
+    run _phpvm_resolve_remote 8.3
+    [ "$status" -eq 0 ]
+    [ "$output" = "8.3.31" ]
+}
+
+@test "resolve: bare major picks highest overall (stubbed curl)" {
+    curl() { printf '%s' '{"8.5.7":{},"8.4.22":{},"8.3.31":{}}'; }
+    run _phpvm_resolve_remote 8
+    [ "$status" -eq 0 ]
+    [ "$output" = "8.5.7" ]
+}
+
+@test "resolve: 8.3 does not match 8.30.x (stubbed curl)" {
+    curl() { printf '%s' '{"8.3.5":{},"8.30.1":{}}'; }
+    run _phpvm_resolve_remote 8.3
+    [ "$status" -eq 0 ]
+    [ "$output" = "8.3.5" ]
+}
