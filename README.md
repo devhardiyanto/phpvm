@@ -31,6 +31,34 @@ source ~/.phpvm-src/linux/phpvm.sh
 
 ---
 
+## Uninstall
+
+Removes `~/.phpvm` and the phpvm entry from your shell config (PATH on Windows,
+the `# phpvm` source block on Linux). It does **not** touch anything else.
+
+### Windows
+
+```powershell
+.\uninstall.ps1                 # removes everything (asks to confirm)
+.\uninstall.ps1 -KeepVersions   # keep built PHP versions
+.\uninstall.ps1 -Yes            # no prompt
+```
+
+### Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/devhardiyanto/phpvm/main/linux/uninstall.sh | bash -s -- --yes
+# or, from a clone:
+bash linux/uninstall.sh                 # removes everything (asks to confirm)
+bash linux/uninstall.sh --keep-versions # keep built PHP versions
+```
+
+By default the uninstaller removes all built PHP versions too; pass
+`--keep-versions` / `-KeepVersions` to retain them. The `phpvm` function stays
+loaded in the current shell until you restart it.
+
+---
+
 ## Usage
 
 ### Version Management
@@ -38,7 +66,8 @@ source ~/.phpvm-src/linux/phpvm.sh
 ```bash
 phpvm install 8.3.0        # install a specific PHP version
 phpvm install 8.3          # install latest 8.3.x patch (auto-resolves)
-phpvm install 7.3          # works for older lines (7.x, 5.x)
+phpvm install 8            # install latest 8.x patch (e.g. 8.5.x)
+phpvm install 7.4          # works for older lines (7.x, 5.x)
 phpvm use 8.3.0            # switch active version
 phpvm list                 # list installed versions
 phpvm current              # show active version
@@ -46,6 +75,9 @@ phpvm uninstall 8.1.29     # remove a version
 phpvm which                # path to active php binary
 phpvm ini                  # open php.ini in editor
 ```
+
+A successful `phpvm install` automatically activates the freshly installed
+version, so you can skip a separate `phpvm use` for the common case.
 
 ### Auto-Switch with `.phpvmrc` (Windows)
 
@@ -188,10 +220,12 @@ sudo apt-get install -y \
 phpvm/
 ├── windows/
 │   ├── phpvm.ps1          # main script
-│   └── install.ps1        # installer
+│   ├── install.ps1        # installer
+│   └── uninstall.ps1      # uninstaller
 ├── linux/
 │   ├── phpvm.sh           # main script (sourced in .bashrc)
-│   └── install.sh         # curl installer
+│   ├── install.sh         # curl installer
+│   └── uninstall.sh       # curl uninstaller
 └── README.md
 ```
 
