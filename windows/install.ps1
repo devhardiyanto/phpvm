@@ -7,13 +7,33 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$PHPVM_VERSION = "1.8.1"
+$PHPVM_VERSION = "1.8.2"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $PHPVM_BIN     = "$PHPVM_DIR\bin"
 
 function Write-Ok   ($m) { Write-Host "  $m" -ForegroundColor Green  }
 function Write-Step ($m) { Write-Host "  > $m" -ForegroundColor Cyan   }
 function Write-Warn ($m) { Write-Host "  [warn] $m" -ForegroundColor Yellow }
+
+# Broadcast WM_SETTINGCHANGE so new terminals pick up the PATH without a logout.
+function Send-EnvChangeBroadcast {
+    if (-not ("PHPVM.NativeMethods" -as [type])) {
+        try {
+            Add-Type -Namespace PHPVM -Name NativeMethods -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+public static extern System.IntPtr SendMessageTimeout(
+    System.IntPtr hWnd, uint Msg, System.IntPtr wParam, string lParam,
+    uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);
+'@
+        } catch { return }
+    }
+    $out = [System.UIntPtr]::Zero
+    try {
+        [void][PHPVM.NativeMethods]::SendMessageTimeout(
+            [System.IntPtr]0xffff, 0x1A, [System.IntPtr]::Zero,
+            "Environment", 0x2, 5000, [ref]$out)
+    } catch { $null = $_ }
+}
 
 Write-Host ""
 Write-Host "  phpvm $PHPVM_VERSION - PHP Version Manager for Windows" -ForegroundColor Cyan
@@ -60,6 +80,7 @@ if ($null -eq $userPath) { $userPath = "" }
 if ($userPath -notlike "*$PHPVM_BIN*") {
     $newPath = "$PHPVM_BIN;$userPath" -replace ";{2,}", ";"
     [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+    Send-EnvChangeBroadcast
     Write-Ok "Added to user PATH   -> $PHPVM_BIN"
 } else {
     Write-Warn "$PHPVM_BIN already in PATH, skipping."

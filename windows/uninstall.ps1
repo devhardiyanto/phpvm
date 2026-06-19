@@ -31,6 +31,27 @@ function Write-Warn ($m) { Write-Host "  [warn] $m" -ForegroundColor Yellow }
 function Write-Err  ($m) { Write-Host "  [error] $m" -ForegroundColor Red }
 function Write-Dim  ($m) { Write-Host "  $m" -ForegroundColor DarkGray }
 
+# Broadcast WM_SETTINGCHANGE so running processes drop the removed PATH entry
+# without a logout. Best-effort.
+function Send-EnvChangeBroadcast {
+    if (-not ("PHPVM.NativeMethods" -as [type])) {
+        try {
+            Add-Type -Namespace PHPVM -Name NativeMethods -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+public static extern System.IntPtr SendMessageTimeout(
+    System.IntPtr hWnd, uint Msg, System.IntPtr wParam, string lParam,
+    uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);
+'@
+        } catch { return }
+    }
+    $out = [System.UIntPtr]::Zero
+    try {
+        [void][PHPVM.NativeMethods]::SendMessageTimeout(
+            [System.IntPtr]0xffff, 0x1A, [System.IntPtr]::Zero,
+            "Environment", 0x2, 5000, [ref]$out)
+    } catch { $null = $_ }
+}
+
 if ($Help) {
     Write-Host ""
     Write-Host "  phpvm uninstaller"
@@ -79,6 +100,7 @@ $parts = $userPath -split ";" | Where-Object {
 $newPath = ($parts -join ";") -replace ";{2,}", ";"
 if ($newPath -ne $userPath) {
     [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+    Send-EnvChangeBroadcast
     Write-Ok "Removed phpvm from User PATH."
 } else {
     Write-Dim "No phpvm entry found in User PATH."

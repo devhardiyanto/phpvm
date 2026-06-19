@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.8.1"
+$PHPVM_VERSION = "1.8.2"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -64,6 +64,31 @@ function Write-Err  ($m) { Write-Host "  [error] $m" -ForegroundColor Red    }
 function Write-Step ($m) { Write-Host "  > $m" -ForegroundColor Cyan   }
 function Write-Warn ($m) { Write-Host "  [warn] $m" -ForegroundColor Yellow }
 function Write-Dim  ($m) { Write-Host "  $m" -ForegroundColor DarkGray }
+
+# Broadcast WM_SETTINGCHANGE so running processes (Explorer, and the terminals
+# it spawns afterward) refresh their environment block after a User PATH change,
+# instead of needing a logout. Best-effort; any failure is swallowed.
+function Send-EnvChangeBroadcast {
+    if (-not ("PHPVM.NativeMethods" -as [type])) {
+        try {
+            Add-Type -Namespace PHPVM -Name NativeMethods -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+public static extern System.IntPtr SendMessageTimeout(
+    System.IntPtr hWnd, uint Msg, System.IntPtr wParam, string lParam,
+    uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);
+'@
+        } catch { return }
+    }
+    $HWND_BROADCAST   = [System.IntPtr]0xffff
+    $WM_SETTINGCHANGE = 0x1A
+    $SMTO_ABORTIFHUNG = 0x2
+    $out = [System.UIntPtr]::Zero
+    try {
+        [void][PHPVM.NativeMethods]::SendMessageTimeout(
+            $HWND_BROADCAST, $WM_SETTINGCHANGE, [System.IntPtr]::Zero,
+            "Environment", $SMTO_ABORTIFHUNG, 5000, [ref]$out)
+    } catch { $null = $_ }
+}
 
 # -- Init ----------------------------------------------------------------------
 function Initialize-PHPVM {
@@ -402,14 +427,17 @@ function Invoke-Use ([string]$ver) {
     $newPath  = (@($CURRENT_LINK) + $parts -join ";") -replace ";{2,}", ";"
     [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
     if ($env:PATH -notlike "*$CURRENT_LINK*") { $env:PATH = "$CURRENT_LINK;$env:PATH" }
+    # Propagate the PATH change to the rest of the system so new terminals get it
+    # without a logout. This session was already updated on the line above.
+    Send-EnvChangeBroadcast
 
     Write-Ok "Now using PHP $ver"
     try {
-        & "$CURRENT_LINK\php.exe" --version 2>$null
+        & "$CURRENT_LINK\php.exe" --version 2>$null | ForEach-Object { Write-Host "  $_" }
     } catch {
         return
     }
-    Write-Warn "Restart your terminal if 'php -v' still shows the previous version."
+    Write-Dim "Active in this terminal now. Other already-open terminals pick it up when reopened."
 }
 
 function Invoke-List {
