@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.8.2"
+PHPVM_VERSION="1.8.3"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -261,7 +261,7 @@ _phpvm_print_dep_install() {
             _dim "    libxml2-dev libsqlite3-dev libssl-dev libcurl4-openssl-dev \\"
             _dim "    libonig-dev libzip-dev zlib1g-dev libreadline-dev \\"
             _dim "    libpng-dev libjpeg-dev libwebp-dev libfreetype6-dev \\"
-            _dim "    libgmp-dev libmysqlclient-dev libpq-dev"
+            _dim "    libgmp-dev libsodium-dev libmysqlclient-dev libpq-dev"
             ;;
         dnf|yum)
             _dim "  sudo $pm install -y \\"
@@ -269,19 +269,20 @@ _phpvm_print_dep_install() {
             _dim "    libxml2-devel sqlite-devel openssl-devel libcurl-devel \\"
             _dim "    oniguruma-devel libzip-devel zlib-devel readline-devel \\"
             _dim "    libpng-devel libjpeg-devel libwebp-devel freetype-devel \\"
-            _dim "    gmp-devel mysql-devel postgresql-devel"
+            _dim "    gmp-devel libsodium-devel mysql-devel postgresql-devel"
             ;;
         pacman)
             _dim "  sudo pacman -S --needed \\"
             _dim "    base-devel autoconf bison re2c pkg-config \\"
             _dim "    libxml2 sqlite openssl curl oniguruma libzip \\"
-            _dim "    libpng libjpeg libwebp freetype2 gmp mysql-libs postgresql-libs"
+            _dim "    libpng libjpeg libwebp freetype2 gmp libsodium mysql-libs postgresql-libs"
             ;;
         zypper)
             _dim "  sudo zypper install -y \\"
             _dim "    gcc make autoconf bison re2c pkg-config \\"
             _dim "    libxml2-devel sqlite3-devel libopenssl-devel libcurl-devel \\"
-            _dim "    oniguruma-devel libzip-devel zlib-devel readline-devel"
+            _dim "    oniguruma-devel libzip-devel zlib-devel readline-devel \\"
+            _dim "    libsodium-devel"
             ;;
         *)
             _dim "  Please install: gcc make autoconf bison re2c pkg-config"
@@ -410,6 +411,7 @@ phpvm_install() {
         "--enable-sockets"
         "--enable-exif"
         "--with-openssl"
+        "--with-sodium"
         "--with-curl"
         "--with-zlib"
         "--with-readline"
@@ -427,6 +429,7 @@ phpvm_install() {
         "--with-pgsql"
         "--with-pdo-pgsql"
         "--with-onig"
+        "--with-pear"
     )
 
     cd "$src_dir" || {
