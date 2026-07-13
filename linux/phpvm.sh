@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.8.3"
+PHPVM_VERSION="1.9.0"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -297,6 +297,52 @@ _phpvm_cpus() {
     nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2
 }
 
+# Run a long build step with its output appended to $PHPVM_LOG, showing a live
+# spinner + elapsed time so a multi-minute `make` never looks hung.
+#   _phpvm_run_logged "Building with 8 cores" make -j8
+# The spinner is drawn on stderr and only when stderr is a terminal, so CI and
+# the bats suite see exactly the output they saw before. Returns the real exit
+# code of the command.
+_phpvm_run_logged() {
+    local label="$1"; shift
+
+    if [[ ! -t 2 ]]; then
+        _step "$label ..."
+        "$@" >> "$PHPVM_LOG" 2>&1
+        return $?
+    fi
+
+    "$@" >> "$PHPVM_LOG" 2>&1 &
+    local pid=$!
+
+    # Ctrl+C must take the build down with us, not orphan it.
+    trap 'kill "$pid" 2>/dev/null; printf "\r\033[K" >&2; trap - INT; return 130' INT
+
+    # Plain ASCII frames + explicit index: ${var:i++:1} is a bashism that bites
+    # in zsh, and Unicode braille spinners mangle on older terminals.
+    local frames='|/-\'
+    local i=0 start=$SECONDS elapsed frame
+    while kill -0 "$pid" 2>/dev/null; do
+        elapsed=$((SECONDS - start))
+        frame=${frames:$i:1}
+        i=$(( (i + 1) % 4 ))
+        printf '\r\033[36m  %s %s ... %dm%02ds\033[0m' \
+            "$frame" "$label" $((elapsed / 60)) $((elapsed % 60)) >&2
+        sleep 0.5
+    done
+
+    wait "$pid"
+    local rc=$?
+    trap - INT
+    printf '\r\033[K' >&2
+
+    elapsed=$((SECONDS - start))
+    if [[ $rc -eq 0 ]]; then
+        _step "$label ... done in $((elapsed / 60))m$((elapsed % 60))s"
+    fi
+    return $rc
+}
+
 # Resolve a partial version to the highest published patch on php.net.
 #   "8"   -> latest 8.x   (e.g. 8.5.7)
 #   "8.3" -> latest 8.3.x (e.g. 8.3.31)
@@ -332,8 +378,16 @@ _phpvm_resolve_remote() {
 #  phpvm install <version>
 # ==============================================================================
 phpvm_install() {
-    local ver="$1"
-    [[ -z "$ver" ]] && { _err "Usage: phpvm install <version>  (e.g. phpvm install 8.3.0)"; return 1; }
+    local ver="" no_use=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-use) no_use=1 ;;
+            -*)       _err "Unknown option: $1. Usage: phpvm install <version> [--no-use]"; return 1 ;;
+            *)        [[ -z "$ver" ]] && ver="$1" ;;
+        esac
+        shift
+    done
+    [[ -z "$ver" ]] && { _err "Usage: phpvm install <version> [--no-use]  (e.g. phpvm install 8.3.0)"; return 1; }
 
     # Partial version: "8" -> latest 8.x, "8.3" -> latest 8.3.x.
     if [[ "$ver" =~ ^[0-9]+$ || "$ver" =~ ^[0-9]+\.[0-9]+$ ]]; then
@@ -401,7 +455,6 @@ phpvm_install() {
     tar -xzf "$cache_file" -C "$PHPVM_CACHE"
 
     # Configure
-    _step "Configuring (this may take a minute) ..."
     mkdir -p "$target"
 
     local configure_opts=(
@@ -446,7 +499,7 @@ phpvm_install() {
         return 1
     }
     ./buildconf --force &>>"$PHPVM_LOG" 2>&1 || true  # needed only for git checkouts
-    ./configure "${configure_opts[@]}" >> "$PHPVM_LOG" 2>&1 || {
+    _phpvm_run_logged "Configuring" ./configure "${configure_opts[@]}" || {
         _err "Configure failed. See log: $PHPVM_LOG"
         rm -rf "$target"
         return 1
@@ -455,16 +508,14 @@ phpvm_install() {
     # Build
     local cpus
     cpus=$(_phpvm_cpus)
-    _step "Building with $cpus cores (grab a coffee, this takes a few minutes) ..."
-    make -j"$cpus" >> "$PHPVM_LOG" 2>&1 || {
+    _phpvm_run_logged "Building with $cpus cores" make -j"$cpus" || {
         _err "Build failed. See log: $PHPVM_LOG"
         rm -rf "$target"
         return 1
     }
 
     # Install
-    _step "Installing ..."
-    make install >> "$PHPVM_LOG" 2>&1 || {
+    _phpvm_run_logged "Installing" make install || {
         _err "Install failed. See log: $PHPVM_LOG"
         rm -rf "$target"
         return 1
@@ -484,7 +535,11 @@ phpvm_install() {
 
     _ok "PHP $ver installed successfully."
 
-    # Activate the freshly built version right away (point 4 — auto-use).
+    # Activate the freshly built version right away, unless opted out.
+    if [[ $no_use -eq 1 ]]; then
+        _dim "Not switching (--no-use). Run: phpvm use $ver"
+        return 0
+    fi
     phpvm_use "$ver"
 }
 
@@ -1069,6 +1124,7 @@ phpvm_help() {
 
   VERSION MANAGEMENT
     phpvm install   <version>      Build & install a PHP version
+                                     --no-use  install without switching to it
     phpvm use       <version>      Switch the active PHP version
     phpvm list                     List installed versions
     phpvm current                  Show active version info

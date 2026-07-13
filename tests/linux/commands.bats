@@ -256,3 +256,57 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"already installed"* ]]
 }
+
+# ---------- _phpvm_run_logged ----------
+
+@test "run_logged: returns the command's exit code" {
+    export PHPVM_LOG="$BATS_TEST_TMPDIR/build.log"
+    run _phpvm_run_logged "Failing" false
+    [ "$status" -ne 0 ]
+    run _phpvm_run_logged "Passing" true
+    [ "$status" -eq 0 ]
+}
+
+@test "run_logged: appends command output to the build log, not stdout" {
+    export PHPVM_LOG="$BATS_TEST_TMPDIR/build.log"
+    : > "$PHPVM_LOG"
+    run _phpvm_run_logged "Echoing" echo "secret-build-noise"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"secret-build-noise"* ]]
+    grep -q "secret-build-noise" "$PHPVM_LOG"
+}
+
+@test "run_logged: prints the label when stderr is not a tty (no spinner)" {
+    export PHPVM_LOG="$BATS_TEST_TMPDIR/build.log"
+    run _phpvm_run_logged "Configuring" true
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Configuring"* ]]
+    # The spinner frames must never reach a non-tty stream.
+    [[ "$output" != *$'\r'* ]]
+}
+
+# ---------- phpvm install --no-use ----------
+
+@test "install --no-use: flag is stripped, version still parsed (flag last)" {
+    run phpvm_install 8.3.x --no-use
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid version '8.3.x'"* ]]
+}
+
+@test "install --no-use: flag is stripped, version still parsed (flag first)" {
+    run phpvm_install --no-use 8.3.x
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid version '8.3.x'"* ]]
+}
+
+@test "install --no-use: rejects an unknown option" {
+    run phpvm_install 8.3.0 --bogus
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Unknown option: --bogus"* ]]
+}
+
+@test "install: bare --no-use without a version still errors on usage" {
+    run phpvm_install --no-use
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Usage: phpvm install"* ]]
+}
