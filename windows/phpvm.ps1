@@ -329,6 +329,14 @@ function Invoke-Install ([string]$ver) {
         $ver = $resolved
     }
 
+    # Anything that isn't a full x.y.z here would blow up later in Get-VSVersion's
+    # [int] cast with a raw PowerShell exception.
+    if ($ver -notmatch '^\d+\.\d+\.\d+$') {
+        Write-Err "Invalid version '$ver'. Usage: phpvm install <version>  (e.g. phpvm install 8.3.0)"
+        if ($ver -eq "composer") { Write-Dim "Did you mean: phpvm composer" }
+        return
+    }
+
     $targetDir = "$VERSIONS_DIR\$ver"
     if (Test-Path $targetDir) {
         Write-Warn "PHP $ver is already installed. Run: phpvm use $ver"
@@ -433,7 +441,7 @@ function Invoke-Use ([string]$ver) {
 
     Write-Ok "Now using PHP $ver"
     try {
-        & "$CURRENT_LINK\php.exe" --version 2>$null | ForEach-Object { Write-Host "  $_" }
+        & "$CURRENT_LINK\php.exe" --version 2>$null | Select-Object -First 1 | ForEach-Object { Write-Host "  $_" }
     } catch {
         return
     }
@@ -1330,7 +1338,6 @@ function Invoke-Upgrade {
         Invoke-WebRequest -Uri $scriptUrl -OutFile $scriptDest -UseBasicParsing
         Unblock-File $scriptDest
         Write-Ok "phpvm upgraded to $latest!"
-        Write-Dim "Restart your terminal to use the new version."
     } catch {
         Write-Err "Upgrade failed: $_"
         Copy-Item $backup $scriptDest -Force

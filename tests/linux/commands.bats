@@ -234,3 +234,25 @@ EOF
     [ "$status" -eq 0 ]
     [ "$output" = "8.3.5" ]
 }
+
+# ---------- phpvm_install version guard ----------
+
+@test "install: rejects a non-version argument before touching the network" {
+    run phpvm_install composer
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid version 'composer'"* ]]
+    [[ "$output" == *"Did you mean: phpvm composer"* ]]
+}
+
+@test "install: rejects a malformed version" {
+    run phpvm_install 8.3.x
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid version"* ]]
+}
+
+@test "install: full x.y.z passes the guard (already-installed path)" {
+    _fake_php_install 8.3.0
+    run phpvm_install 8.3.0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already installed"* ]]
+}

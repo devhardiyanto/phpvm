@@ -349,6 +349,14 @@ phpvm_install() {
         fi
     fi
 
+    # Reject non-versions up front; otherwise they only fail later as a confusing
+    # "Download failed" from php.net.
+    if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        _err "Invalid version '$ver'. Usage: phpvm install <version>  (e.g. phpvm install 8.3.0)"
+        [[ "$ver" == "composer" ]] && _dim "Did you mean: phpvm composer"
+        return 1
+    fi
+
     local target="$PHPVM_VERSIONS/$ver"
 
     if [[ -d "$target" ]]; then
