@@ -320,7 +320,7 @@ _phpvm_run_logged() {
 
     # Plain ASCII frames + explicit index: ${var:i++:1} is a bashism that bites
     # in zsh, and Unicode braille spinners mangle on older terminals.
-    local frames='|/-\'
+    local frames="|/-\\"
     local i=0 start=$SECONDS elapsed frame
     while kill -0 "$pid" 2>/dev/null; do
         elapsed=$((SECONDS - start))
