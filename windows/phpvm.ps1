@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.8.3"
+$PHPVM_VERSION = "1.9.0"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -241,9 +241,77 @@ function Remove-Junction ([string]$path) {
 }
 
 # -- Download helper -----------------------------------------------------------
+# Progress is only worth drawing for the PHP zips (tens of MB); the Xdebug DLL
+# and ext zips are small enough that a bar would just flicker.
+$script:PROGRESS_MIN_BYTES = 5MB
+
+function Format-Bytes ([double]$bytes) {
+    if ($bytes -ge 1GB) { return "{0:N1} GB" -f ($bytes / 1GB) }
+    if ($bytes -ge 1MB) { return "{0:N1} MB" -f ($bytes / 1MB) }
+    return "{0:N0} KB" -f ($bytes / 1KB)
+}
+
+function Format-Duration ([double]$seconds) {
+    if ($seconds -lt 0 -or [double]::IsInfinity($seconds) -or [double]::IsNaN($seconds)) { return "--:--" }
+    $ts = [TimeSpan]::FromSeconds([Math]::Round($seconds))
+    if ($ts.TotalHours -ge 1) { return "{0:d1}:{1:d2}:{2:d2}" -f [int]$ts.TotalHours, $ts.Minutes, $ts.Seconds }
+    return "{0:d2}:{1:d2}" -f $ts.Minutes, $ts.Seconds
+}
+
+# Streams $url to $dest, drawing a byte-level progress line on stderr so stdout
+# stays pipe-clean. Falls back to a plain copy when the size is unknown, the
+# payload is small, or stderr is redirected (CI, tests).
 function Invoke-Download ([string]$url, [string]$dest) {
     $ProgressPreference = "SilentlyContinue"
-    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+
+    $resp = $null
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($url)
+        $req.UserAgent = "phpvm/$PHPVM_VERSION"
+        $resp  = $req.GetResponse()
+        $total = [long]$resp.ContentLength
+    } catch {
+        if ($resp) { $resp.Dispose() }
+        # Anything odd about the response: let Invoke-WebRequest deal with it.
+        Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+        return
+    }
+
+    $showProgress = ($total -ge $script:PROGRESS_MIN_BYTES) -and (-not [Console]::IsErrorRedirected)
+
+    $input_  = $resp.GetResponseStream()
+    $output = [System.IO.File]::Create($dest)
+    $buffer = New-Object byte[] 81920
+    $read      = 0
+    $sw        = [Diagnostics.Stopwatch]::StartNew()
+    $lastDraw  = 0
+
+    try {
+        while (($n = $input_.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $output.Write($buffer, 0, $n)
+            $read += $n
+
+            if (-not $showProgress) { continue }
+            # Throttle redraws; repainting per 80 KB chunk is pure overhead.
+            if ($sw.ElapsedMilliseconds - $lastDraw -lt 120 -and $read -lt $total) { continue }
+            $lastDraw = $sw.ElapsedMilliseconds
+
+            $elapsed = [Math]::Max($sw.Elapsed.TotalSeconds, 0.001)
+            $speed   = $read / $elapsed
+            $eta     = if ($speed -gt 0) { ($total - $read) / $speed } else { -1 }
+            $pct     = [int](100 * $read / $total)
+
+            $line = "  {0,3}%  {1} / {2}  ({3}/s, eta {4})" -f `
+                $pct, (Format-Bytes $read), (Format-Bytes $total),
+                (Format-Bytes $speed), (Format-Duration $eta)
+            [Console]::Error.Write(("`r" + $line.PadRight(70)))
+        }
+    } finally {
+        $output.Dispose()
+        $input_.Dispose()
+        $resp.Dispose()
+        if ($showProgress) { [Console]::Error.Write("`r" + (" " * 70) + "`r") }
+    }
 }
 
 
@@ -313,8 +381,19 @@ function Test-URLExists ([string]$url) {
 #  CORE COMMANDS
 # ==============================================================================
 
-function Invoke-Install ([string]$ver) {
-    if (-not $ver) { Write-Err "Usage: phpvm install <version>  (e.g. phpvm install 8.3.0)"; return }
+function Invoke-Install ([string]$ver, [string]$flag) {
+    # Accept --no-use in either position, matching the Linux arg loop.
+    $noUse      = $false
+    $positional = @()
+    foreach ($a in @($ver, $flag)) {
+        if (-not $a)            { continue }
+        if ($a -eq "--no-use")  { $noUse = $true }
+        elseif ($a -like "-*")  { Write-Err "Unknown option: $a. Usage: phpvm install <version> [--no-use]"; return }
+        else                    { $positional += $a }
+    }
+    $ver = if ($positional.Count -gt 0) { $positional[0] } else { "" }
+
+    if (-not $ver) { Write-Err "Usage: phpvm install <version> [--no-use]  (e.g. phpvm install 8.3.0)"; return }
 
     # Allow "8" -> latest 8.x and "8.3" -> latest 8.3.x.
     if ($ver -match '^\d+(\.\d+)?$') {
@@ -327,6 +406,14 @@ function Invoke-Install ([string]$ver) {
         }
         Write-Ok "Latest PHP $ver -> $resolved"
         $ver = $resolved
+    }
+
+    # Anything that isn't a full x.y.z here would blow up later in Get-VSVersion's
+    # [int] cast with a raw PowerShell exception.
+    if ($ver -notmatch '^\d+\.\d+\.\d+$') {
+        Write-Err "Invalid version '$ver'. Usage: phpvm install <version>  (e.g. phpvm install 8.3.0)"
+        if ($ver -eq "composer") { Write-Dim "Did you mean: phpvm composer" }
+        return
     }
 
     $targetDir = "$VERSIONS_DIR\$ver"
@@ -400,7 +487,11 @@ function Invoke-Install ([string]$ver) {
 
     Write-Ok "PHP $ver installed successfully."
 
-    # Activate the freshly installed version right away (point 4 - auto-use).
+    # Activate the freshly installed version right away, unless opted out.
+    if ($noUse) {
+        Write-Dim "Not switching (--no-use). Run: phpvm use $ver"
+        return
+    }
     Invoke-Use $ver
 }
 
@@ -433,7 +524,7 @@ function Invoke-Use ([string]$ver) {
 
     Write-Ok "Now using PHP $ver"
     try {
-        & "$CURRENT_LINK\php.exe" --version 2>$null | ForEach-Object { Write-Host "  $_" }
+        & "$CURRENT_LINK\php.exe" --version 2>$null | Select-Object -First 1 | ForEach-Object { Write-Host "  $_" }
     } catch {
         return
     }
@@ -1224,6 +1315,7 @@ function Show-Help {
 
   VERSION MANAGEMENT
     phpvm install   <version>      Download & install a PHP version
+                                     --no-use  install without switching to it
     phpvm use       <version>      Switch the active PHP version
     phpvm list                     List installed versions
     phpvm current                  Show active version info
@@ -1330,7 +1422,6 @@ function Invoke-Upgrade {
         Invoke-WebRequest -Uri $scriptUrl -OutFile $scriptDest -UseBasicParsing
         Unblock-File $scriptDest
         Write-Ok "phpvm upgraded to $latest!"
-        Write-Dim "Restart your terminal to use the new version."
     } catch {
         Write-Err "Upgrade failed: $_"
         Copy-Item $backup $scriptDest -Force
@@ -1387,7 +1478,7 @@ if (-not $env:PHPVM_NO_ENTRY) {
     }
 
     switch ($Command.ToLower()) {
-        "install"                       { Invoke-Install   $SubOrVer }
+        "install"                       { Invoke-Install   $SubOrVer $Arg2 }
         "use"                           { Invoke-Use       $SubOrVer }
         { $_ -in "list", "ls" }         { Invoke-List }
         "current"                       { Invoke-Current }

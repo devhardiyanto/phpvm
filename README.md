@@ -68,6 +68,7 @@ phpvm install 8.3.0        # install a specific PHP version
 phpvm install 8.3          # install latest 8.3.x patch (auto-resolves)
 phpvm install 8            # install latest 8.x patch (e.g. 8.5.x)
 phpvm install 7.4          # works for older lines (7.x, 5.x)
+phpvm install 8.4.16 --no-use   # install but keep the current version active
 phpvm use 8.3.0            # switch active version
 phpvm list                 # list installed versions
 phpvm current              # show active version
@@ -77,7 +78,13 @@ phpvm ini                  # open php.ini in editor
 ```
 
 A successful `phpvm install` automatically activates the freshly installed
-version, so you can skip a separate `phpvm use` for the common case.
+version, so you can skip a separate `phpvm use` for the common case. Pass
+`--no-use` to install a version in the background without switching to it.
+
+Long installs report live progress: a download bar on Windows, and a spinner
+with elapsed time over the `configure` / `make` / `make install` steps on Linux.
+Both are drawn on stderr and are suppressed automatically when output is not a
+terminal, so piping and CI logs stay clean.
 
 ### Auto-Switch with `.phpvmrc` (Windows)
 
