@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.9.0"
+$PHPVM_VERSION = "1.9.1"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -490,9 +490,38 @@ function Invoke-Install ([string]$ver, [string]$flag) {
     # Activate the freshly installed version right away, unless opted out.
     if ($noUse) {
         Write-Dim "Not switching (--no-use). Run: phpvm use $ver"
-        return
+    } else {
+        Invoke-Use $ver
     }
-    Invoke-Use $ver
+
+    Show-OlderPatchHint $ver
+}
+
+# `phpvm install 8` resolves to the newest patch and installs it alongside any
+# older patch of the same line. Point that out rather than removing it: another
+# project may still pin the old patch in .phpvmrc.
+function Get-OlderPatch ([string]$ver) {
+    if ($ver -notmatch '^\d+\.\d+\.\d+$') { return @() }
+    if (-not (Test-Path $VERSIONS_DIR))   { return @() }
+
+    $parts = $ver -split '\.'
+    $line  = "$($parts[0]).$($parts[1])"
+
+    return @(
+        Get-ChildItem $VERSIONS_DIR -Directory -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty Name |
+            Where-Object { $_ -match '^\d+\.\d+\.\d+$' -and $_ -like "$line.*" } |
+            Where-Object { [version]$_ -lt [version]$ver } |
+            Sort-Object { [version]$_ }
+    )
+}
+
+function Show-OlderPatchHint ([string]$ver) {
+    $older = Get-OlderPatch $ver
+    if ($older.Count -eq 0) { return }
+
+    Write-Dim "Older patch of $(($ver -split '\.')[0..1] -join '.') still installed: $($older -join ', ')"
+    Write-Dim "Remove it with: phpvm uninstall $($older[-1])"
 }
 
 function Invoke-Use ([string]$ver) {
@@ -1302,7 +1331,9 @@ php "$composerPhar" %*
     Write-Ok "  phar : $composerPhar"
     Write-Ok "  shim : $composerBat"
     Write-Host ""
-    & $info.Exe $composerPhar --version | ForEach-Object { Write-Host "  $_" }
+    # 2>$null: composer writes its PHP-version banner and the "run diagnose" hint
+    # to stderr, which would bypass this pipeline and print unindented.
+    & $info.Exe $composerPhar --version 2>$null | ForEach-Object { Write-Host "  $_" }
     Write-Host ""
     Write-Dim "Composer follows your active PHP version - no need to re-run after 'phpvm use'."
 }

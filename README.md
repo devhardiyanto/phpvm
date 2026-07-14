@@ -9,11 +9,17 @@ Install and switch PHP versions on **Windows** (CMD + PowerShell) and **Linux** 
 ### Windows
 
 ```powershell
-# Download both files (phpvm.ps1 + install.ps1) to the same folder, then:
-.\install.ps1
+irm https://raw.githubusercontent.com/devhardiyanto/phpvm/main/windows/install.ps1 | iex
 ```
 
 Restart your terminal. No admin required.
+
+Or, if you would rather read the script before running it:
+
+```powershell
+# Download both files (phpvm.ps1 + install.ps1) to the same folder, then:
+.\install.ps1
+```
 
 ### Linux
 

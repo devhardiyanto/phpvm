@@ -1,13 +1,14 @@
 # ==============================================================================
 #  install.ps1 - phpvm installer for Windows
 #  Run as normal user (no admin required)
-#  Usage: .\install.ps1
+#  Usage: irm https://raw.githubusercontent.com/devhardiyanto/phpvm/main/windows/install.ps1 | iex
+#     or: .\install.ps1   (from a clone, with phpvm.ps1 alongside)
 # ==============================================================================
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$PHPVM_VERSION = "1.9.0"
+$PHPVM_VERSION = "1.9.1"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $PHPVM_BIN     = "$PHPVM_DIR\bin"
 
@@ -46,15 +47,29 @@ foreach ($d in @($PHPVM_DIR, "$PHPVM_DIR\versions", $PHPVM_BIN)) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
 }
 
-# 2. Copy phpvm.ps1
-$scriptSrc = Join-Path $PSScriptRoot "phpvm.ps1"
-if (-not (Test-Path $scriptSrc)) {
-    Write-Host "  [error] phpvm.ps1 not found next to install.ps1" -ForegroundColor Red
-    exit 1
+# 2. Obtain phpvm.ps1 - from the clone if we are running off disk, otherwise
+#    from the repo, so `irm .../install.ps1 | iex` works with nothing local.
+#    ($PSScriptRoot is empty when this script is piped into iex.)
+$PHPVM_REPO = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main"
+$scriptSrc  = if ($PSScriptRoot) { Join-Path $PSScriptRoot "phpvm.ps1" } else { $null }
+
+if ($scriptSrc -and (Test-Path $scriptSrc)) {
+    Copy-Item $scriptSrc "$PHPVM_DIR\phpvm.ps1" -Force
+    Write-Ok "Copied phpvm.ps1     -> $PHPVM_DIR\phpvm.ps1"
+} else {
+    Write-Step "Downloading phpvm.ps1 ..."
+    try {
+        Invoke-WebRequest -Uri "$PHPVM_REPO/windows/phpvm.ps1" `
+                          -OutFile "$PHPVM_DIR\phpvm.ps1" -UseBasicParsing
+    } catch {
+        # throw, not exit: under `irm ... | iex` an `exit` would close the user's
+        # whole session instead of just aborting the install.
+        Write-Host "  [error] Could not download phpvm.ps1: $_" -ForegroundColor Red
+        throw "phpvm install aborted."
+    }
+    Write-Ok "Downloaded phpvm.ps1 -> $PHPVM_DIR\phpvm.ps1"
 }
-Copy-Item $scriptSrc "$PHPVM_DIR\phpvm.ps1" -Force
 Unblock-File "$PHPVM_DIR\phpvm.ps1"
-Write-Ok "Copied phpvm.ps1 -> $PHPVM_DIR\phpvm.ps1"
 
 # 3. Create CMD launcher (phpvm.cmd) - works in CMD and PowerShell
 $cmdLauncher = '@echo off

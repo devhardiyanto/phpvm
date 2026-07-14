@@ -75,3 +75,34 @@ Describe 'Invoke-Install --no-use parsing' {
         Should -Invoke Resolve-PHPURL -Times 0
     }
 }
+
+Describe 'Get-OlderPatch' {
+    BeforeAll {
+        . $PSScriptRoot/Common.ps1
+
+        # Build a fake $VERSIONS_DIR. 8.50.1 is here on purpose: it must not be
+        # mistaken for part of the 8.5 line.
+        $fakeVersions = Join-Path $TestDrive 'versions'
+        foreach ($v in @('7.4.33', '8.3.31', '8.5.2', '8.5.6', '8.5.8', '8.5.10', '8.5.11', '8.50.1')) {
+            New-Item -ItemType Directory -Path (Join-Path $fakeVersions $v) -Force | Out-Null
+        }
+        # Reassign $VERSIONS_DIR; functions read it dynamically.
+        $VERSIONS_DIR = $fakeVersions
+    }
+
+    It 'Lists only lower patches of the same minor line' {
+        Get-OlderPatch '8.5.8' | Should -Be @('8.5.2', '8.5.6')
+    }
+
+    It 'Sorts numerically, not lexically' {
+        Get-OlderPatch '8.5.11' | Should -Be @('8.5.2', '8.5.6', '8.5.8', '8.5.10')
+    }
+
+    It 'Does not treat 8.50.x as part of the 8.5 line' {
+        Get-OlderPatch '8.50.1' | Should -BeNullOrEmpty
+    }
+
+    It 'Returns nothing when it is the only patch of its line' {
+        Get-OlderPatch '8.3.31' | Should -BeNullOrEmpty
+    }
+}
