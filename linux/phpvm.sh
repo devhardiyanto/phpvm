@@ -312,11 +312,17 @@ _phpvm_run_logged() {
         return $?
     fi
 
+    # phpvm.sh is sourced into an interactive shell, where job control is on and
+    # would print "[3] 2015" / "[3] + done ..." around our background build.
+    # Turn the monitor off for the duration and put it back exactly as we found it.
+    local had_monitor=0
+    case "$-" in *m*) had_monitor=1; set +m ;; esac
+
     "$@" >> "$PHPVM_LOG" 2>&1 &
     local pid=$!
 
     # Ctrl+C must take the build down with us, not orphan it.
-    trap 'kill "$pid" 2>/dev/null; printf "\r\033[K" >&2; trap - INT; return 130' INT
+    trap 'kill "$pid" 2>/dev/null; printf "\r\033[K" >&2; [[ $had_monitor -eq 1 ]] && set -m; trap - INT; return 130' INT
 
     # Plain ASCII frames + explicit index: ${var:i++:1} is a bashism that bites
     # in zsh, and Unicode braille spinners mangle on older terminals.
@@ -334,6 +340,7 @@ _phpvm_run_logged() {
     wait "$pid"
     local rc=$?
     trap - INT
+    [[ $had_monitor -eq 1 ]] && set -m
     printf '\r\033[K' >&2
 
     elapsed=$((SECONDS - start))
@@ -493,30 +500,26 @@ phpvm_install() {
         "--with-pear"
     )
 
-    cd "$src_dir" || {
-        _err "Could not enter source directory: $src_dir"
-        rm -rf "$target"
-        return 1
-    }
-    ./buildconf --force &>>"$PHPVM_LOG" 2>&1 || true  # needed only for git checkouts
-    _phpvm_run_logged "Configuring" ./configure "${configure_opts[@]}" || {
-        _err "Configure failed. See log: $PHPVM_LOG"
-        rm -rf "$target"
-        return 1
-    }
-
-    # Build
     local cpus
     cpus=$(_phpvm_cpus)
-    _phpvm_run_logged "Building with $cpus cores" make -j"$cpus" || {
-        _err "Build failed. See log: $PHPVM_LOG"
-        rm -rf "$target"
-        return 1
-    }
 
-    # Install
-    _phpvm_run_logged "Installing" make install || {
-        _err "Install failed. See log: $PHPVM_LOG"
+    # The whole build runs in a subshell so the `cd` cannot escape: phpvm.sh is
+    # sourced, so a bare cd here would strand the user's own shell in the build
+    # directory — which is then deleted, leaving them in a dangling cwd.
+    (
+        cd "$src_dir" || { _err "Could not enter source directory: $src_dir"; exit 1; }
+
+        ./buildconf --force &>>"$PHPVM_LOG" 2>&1 || true  # needed only for git checkouts
+
+        _phpvm_run_logged "Configuring" ./configure "${configure_opts[@]}" \
+            || { _err "Configure failed. See log: $PHPVM_LOG"; exit 1; }
+
+        _phpvm_run_logged "Building with $cpus cores" make -j"$cpus" \
+            || { _err "Build failed. See log: $PHPVM_LOG"; exit 1; }
+
+        _phpvm_run_logged "Installing" make install \
+            || { _err "Install failed. See log: $PHPVM_LOG"; exit 1; }
+    ) || {
         rm -rf "$target"
         return 1
     }
@@ -538,9 +541,40 @@ phpvm_install() {
     # Activate the freshly built version right away, unless opted out.
     if [[ $no_use -eq 1 ]]; then
         _dim "Not switching (--no-use). Run: phpvm use $ver"
-        return 0
+    else
+        phpvm_use "$ver"
     fi
-    phpvm_use "$ver"
+
+    _phpvm_older_patch_hint "$ver"
+}
+
+# `phpvm install 8` resolves to the newest patch and installs it alongside any
+# older patch of the same line. Point that out rather than removing it: another
+# project may still pin the old patch in .phpvmrc.
+_phpvm_older_patches() {
+    local ver="$1"
+    [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
+    [[ -d "$PHPVM_VERSIONS" ]] || return 0
+
+    local line="${ver%.*}" name
+    find "$PHPVM_VERSIONS" -mindepth 1 -maxdepth 1 -type d -name "$line.*" 2>/dev/null \
+        | while read -r d; do
+            name=$(basename "$d")
+            [[ "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+            [[ "$name" == "$ver" ]] && continue
+            # Keep only patches strictly below $ver.
+            [[ "$(printf '%s\n%s' "$name" "$ver" | sort -V | head -1)" == "$name" ]] && echo "$name"
+        done | sort -V
+}
+
+_phpvm_older_patch_hint() {
+    local ver="$1" older newest
+    older=$(_phpvm_older_patches "$ver")
+    [[ -z "$older" ]] && return 0
+
+    newest=$(echo "$older" | tail -1)
+    _dim "Older patch of ${ver%.*} still installed: $(echo "$older" | paste -sd ', ')"
+    _dim "Remove it with: phpvm uninstall $newest"
 }
 
 # ==============================================================================

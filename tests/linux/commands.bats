@@ -310,3 +310,42 @@ EOF
     [ "$status" -ne 0 ]
     [[ "$output" == *"Usage: phpvm install"* ]]
 }
+
+# ---------- older-patch hint ----------
+
+@test "older_patches: lists only lower patches of the same minor line" {
+    mkdir -p "$PHPVM_VERSIONS"/{8.5.6,8.5.8,8.5.10,8.3.31,7.4.33}
+    run _phpvm_older_patches 8.5.8
+    [ "$status" -eq 0 ]
+    [ "$output" = "8.5.6" ]
+}
+
+@test "older_patches: sorts numerically, not lexically" {
+    mkdir -p "$PHPVM_VERSIONS"/{8.5.2,8.5.10,8.5.11}
+    run _phpvm_older_patches 8.5.11
+    [ "$status" -eq 0 ]
+    [ "$output" = "8.5.2
+8.5.10" ]
+}
+
+@test "older_patches: does not treat 8.50.x as part of the 8.5 line" {
+    mkdir -p "$PHPVM_VERSIONS"/{8.50.1,8.5.9}
+    run _phpvm_older_patches 8.5.9
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "older_patches: silent when it is the only patch of its line" {
+    mkdir -p "$PHPVM_VERSIONS"/{8.5.8,8.3.31}
+    run _phpvm_older_patches 8.5.8
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "older_patch_hint: names the version to uninstall" {
+    mkdir -p "$PHPVM_VERSIONS"/{8.5.6,8.5.8}
+    run _phpvm_older_patch_hint 8.5.8
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Older patch of 8.5 still installed: 8.5.6"* ]]
+    [[ "$output" == *"phpvm uninstall 8.5.6"* ]]
+}
