@@ -123,10 +123,13 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
     if ($version -match '(\d+\.\d+\.\d+)') { $version = $Matches[1] }
     $short = $version -replace '^(\d+\.\d+)\..*', '$1'
 
-    $tsLine = ($raw | Select-String "Thread Safety" | Select-Object -First 1).ToString()
-    $isTS   = $tsLine -match "enabled"
+    # Both lines can be absent when php -i fails or emits garbage; .ToString()
+    # on the empty pipeline would throw a raw MethodInvocationException.
+    $tsLine = $raw | Select-String "Thread Safety" | Select-Object -First 1
+    $isTS   = $tsLine -and ($tsLine.ToString() -match "enabled")
 
-    $compLine = ($raw | Select-String "Compiler" | Select-Object -First 1).ToString()
+    $compLine = $raw | Select-String "Compiler" | Select-Object -First 1
+    $compLine = if ($compLine) { $compLine.ToString() } else { "" }
     $vs = switch -Regex ($compLine) {
         "MSVC17|VS17" { "vs17"; break }
         "MSVC16|VS16" { "vs16"; break }
@@ -158,6 +161,8 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
 # Per windows.php.net: 5.x -> vc11, 7.0-7.1 -> vc14, 7.2-7.4 -> vc15,
 # 8.0-8.3 -> vs16, 8.4+ -> vs17.
 function Get-VSVersion ([string]$ver) {
+    # Anything that isn't x.y... would blow up the [int] casts below.
+    if ($ver -notmatch '^\d+\.\d+') { return "vs17" }
     $major = [int]($ver -split '\.')[0]
     $minor = [int]($ver -split '\.')[1]
     if ($major -eq 5)                          { return "vc11" }
@@ -226,7 +231,11 @@ function Get-CurrentVersion {
     if (-not (Test-Path $CURRENT_LINK)) { return $null }
     $item = Get-Item $CURRENT_LINK -Force
     if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-        return Split-Path $item.Target -Leaf
+        # On PS 5.1 Target can be missing or empty for some reparse points;
+        # Split-Path $null would throw under StrictMode.
+        $target = if ($item.PSObject.Properties['Target']) { @($item.Target)[0] } else { $null }
+        if (-not $target) { return $null }
+        return Split-Path $target -Leaf
     }
     return $null
 }
