@@ -92,6 +92,26 @@ with elapsed time over the `configure` / `make` / `make install` steps on Linux.
 Both are drawn on stderr and are suppressed automatically when output is not a
 terminal, so piping and CI logs stay clean.
 
+### CA bundle (Windows)
+
+Windows PHP builds ship without a CA bundle, so out of the box every HTTPS
+request from PHP fails with `cURL error 60`. On install, phpvm downloads the
+[Mozilla CA bundle](https://curl.se/docs/caextract.html) once to
+`~/.phpvm/cacert.pem` and points the new version's `curl.cainfo` and
+`openssl.cafile` at it. The bundle is shared, so switching PHP versions never
+loses the fix.
+
+```powershell
+phpvm cacert               # show bundle status (path + age)
+phpvm cacert update        # refresh the bundle from curl.se
+phpvm install 8.3 --no-cacert   # opt out if you manage your own bundle
+phpvm fix-ini              # re-apply to an existing install
+```
+
+If the download fails (offline install), phpvm warns and continues — run
+`phpvm cacert update` later. Linux is unaffected: source builds use the
+distro's system certificate store.
+
 ### Auto-Switch with `.phpvmrc` (Windows)
 
 Drop a `.phpvmrc` file in your project root containing the PHP version you want:
