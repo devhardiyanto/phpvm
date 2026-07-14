@@ -360,6 +360,7 @@ it only switches between installed ones.
 | Debian 11+ | bash / zsh | ✅ |
 | Fedora / RHEL | bash / zsh | ✅ |
 | Arch Linux | bash / zsh | ✅ |
+| macOS 13+ | bash / zsh | 🧪 experimental — CI-tested only, `brew` deps; FPM defaults assume Linux |
 
 ### PHP × compiler toolchain (Windows builds)
 

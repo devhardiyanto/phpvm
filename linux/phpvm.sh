@@ -40,8 +40,9 @@ _phpvm_check_update() {
     # Only check once per day
     if [[ -f "$PHPVM_LAST_CHECK" ]]; then
         local last_ts now elapsed
-        last_ts=$(date -r "$PHPVM_LAST_CHECK" +%s 2>/dev/null || \
-                  stat -c %Y "$PHPVM_LAST_CHECK" 2>/dev/null || echo 0)
+        # GNU stat (-c) on Linux, BSD stat (-f) on macOS.
+        last_ts=$(stat -c %Y "$PHPVM_LAST_CHECK" 2>/dev/null || \
+                  stat -f %m "$PHPVM_LAST_CHECK" 2>/dev/null || echo 0)
         now=$(date +%s)
         elapsed=$(( now - last_ts ))
         [[ $elapsed -lt $PHPVM_CHECK_INTERVAL ]] && return
@@ -283,6 +284,13 @@ _phpvm_print_dep_install() {
             _dim "    libxml2-devel sqlite3-devel libopenssl-devel libcurl-devel \\"
             _dim "    oniguruma-devel libzip-devel zlib-devel readline-devel \\"
             _dim "    libsodium-devel"
+            ;;
+        brew)
+            _dim "  brew install \\"
+            _dim "    autoconf bison re2c pkg-config \\"
+            _dim "    openssl@3 libxml2 sqlite curl oniguruma libzip zlib readline \\"
+            _dim "    libpng jpeg webp freetype gmp libsodium gettext"
+            _dim "  (Xcode Command Line Tools required: xcode-select --install)"
             ;;
         *)
             _dim "  Please install: gcc make autoconf bison re2c pkg-config"
