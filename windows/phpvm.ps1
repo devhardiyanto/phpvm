@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.9.0"
+$PHPVM_VERSION = "1.9.1"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -1302,7 +1302,9 @@ php "$composerPhar" %*
     Write-Ok "  phar : $composerPhar"
     Write-Ok "  shim : $composerBat"
     Write-Host ""
-    & $info.Exe $composerPhar --version | ForEach-Object { Write-Host "  $_" }
+    # 2>$null: composer writes its PHP-version banner and the "run diagnose" hint
+    # to stderr, which would bypass this pipeline and print unindented.
+    & $info.Exe $composerPhar --version 2>$null | ForEach-Object { Write-Host "  $_" }
     Write-Host ""
     Write-Dim "Composer follows your active PHP version - no need to re-run after 'phpvm use'."
 }
