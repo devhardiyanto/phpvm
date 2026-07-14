@@ -47,7 +47,7 @@ foreach ($d in @($PHPVM_DIR, "$PHPVM_DIR\versions", $PHPVM_BIN)) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
 }
 
-# 2. Obtain phpvm.ps1 — from the clone if we are running off disk, otherwise
+# 2. Obtain phpvm.ps1 - from the clone if we are running off disk, otherwise
 #    from the repo, so `irm .../install.ps1 | iex` works with nothing local.
 #    ($PSScriptRoot is empty when this script is piped into iex.)
 $PHPVM_REPO = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main"
