@@ -32,6 +32,12 @@ Describe 'Get-VSVersion' {
     It 'Defaults to vs17 for future majors' {
         Get-VSVersion '9.0.0' | Should -Be 'vs17'
     }
+
+    It 'Does not throw on non-version input (StrictMode guard)' {
+        Get-VSVersion ''         | Should -Be 'vs17'
+        Get-VSVersion 'composer' | Should -Be 'vs17'
+        Get-VSVersion '8'        | Should -Be 'vs17'
+    }
 }
 
 Describe 'Get-WebString' {

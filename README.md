@@ -92,6 +92,26 @@ with elapsed time over the `configure` / `make` / `make install` steps on Linux.
 Both are drawn on stderr and are suppressed automatically when output is not a
 terminal, so piping and CI logs stay clean.
 
+### CA bundle (Windows)
+
+Windows PHP builds ship without a CA bundle, so out of the box every HTTPS
+request from PHP fails with `cURL error 60`. On install, phpvm downloads the
+[Mozilla CA bundle](https://curl.se/docs/caextract.html) once to
+`~/.phpvm/cacert.pem` and points the new version's `curl.cainfo` and
+`openssl.cafile` at it. The bundle is shared, so switching PHP versions never
+loses the fix.
+
+```powershell
+phpvm cacert               # show bundle status (path + age)
+phpvm cacert update        # refresh the bundle from curl.se
+phpvm install 8.3 --no-cacert   # opt out if you manage your own bundle
+phpvm fix-ini              # re-apply to an existing install
+```
+
+If the download fails (offline install), phpvm warns and continues — run
+`phpvm cacert update` later. Linux is unaffected: source builds use the
+distro's system certificate store.
+
 ### Auto-Switch with `.phpvmrc` (Windows)
 
 Drop a `.phpvmrc` file in your project root containing the PHP version you want:
@@ -272,6 +292,64 @@ phpvm/
 
 ---
 
+## Troubleshooting
+
+### `cURL error 60: SSL certificate problem` (Windows)
+
+Windows PHP builds ship no CA bundle, so HTTPS from PHP (Guzzle, Laravel HTTP
+client, API calls) fails TLS verification even though `curl.exe` works fine
+(it uses the Windows cert store). phpvm ≥ 1.10.0 configures a shared bundle
+automatically on install. For versions installed earlier, run:
+
+```powershell
+phpvm fix-ini        # wires curl.cainfo / openssl.cafile to ~/.phpvm/cacert.pem
+```
+
+Do **not** work around this with `verify => false` in application code — that
+disables TLS verification and tends to leak into production.
+
+### `VCRUNTIME140.dll was not found` / php.exe won't start (Windows)
+
+PHP needs the matching Visual C++ Redistributable (see the matrix below —
+vs16/vs17 builds need the 2015–2022 x64 redist). Download:
+<https://aka.ms/vs/17/release/vc_redist.x64.exe>
+
+### `php -v` shows the wrong version (Windows)
+
+Another PHP on PATH (XAMPP, Laragon, Herd) is shadowing phpvm. Check with
+`phpvm which` — if the path isn't `~\.phpvm\current\php.exe`, move
+`%USERPROFILE%\.phpvm\current` above the other entry in your User PATH, or
+remove the other entry.
+
+### Extensions won't load / `Unable to load dynamic library`
+
+`extension_dir` in php.ini may point somewhere else (typically after copying
+an ini from another install). Run `phpvm fix-ini` to re-pin it to the active
+version's `ext\` folder, then verify with `phpvm ext list`.
+
+### `running scripts is disabled on this system` (Windows install)
+
+PowerShell's ExecutionPolicy blocks the installer. Allow local scripts for
+your user, then re-run:
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+### `Configure failed` / `Build failed` (Linux)
+
+A dev library is missing. Run `phpvm deps` for the exact install command for
+your distro, and check the tail of `~/.phpvm/build.log` for the first error.
+
+### `.phpvmrc` doesn't auto-switch
+
+The shell hook isn't active. Windows: `phpvm hook install`, then open a new
+terminal. Linux: make sure your `~/.bashrc` / `~/.zshrc` sources
+`~/.phpvm/phpvm.sh`. Note that auto-switch never installs missing versions —
+it only switches between installed ones.
+
+---
+
 ## Compatibility
 
 | Platform | Shell | Status |
@@ -282,6 +360,25 @@ phpvm/
 | Debian 11+ | bash / zsh | ✅ |
 | Fedora / RHEL | bash / zsh | ✅ |
 | Arch Linux | bash / zsh | ✅ |
+| macOS 13+ | bash / zsh | 🧪 experimental — CI-tested only, `brew` deps; FPM defaults assume Linux |
+
+### PHP × compiler toolchain (Windows builds)
+
+Which Visual Studio toolchain each PHP line is built with on windows.php.net,
+and therefore which VC++ Redistributable it needs at runtime. phpvm resolves
+this automatically; the table is here for debugging download or DLL issues.
+
+| PHP | Toolchain | VC++ Redistributable |
+|---|---|---|
+| 5.x | vc11 | Visual C++ 2012 |
+| 7.0 – 7.1 | vc14 | Visual C++ 2015 |
+| 7.2 – 7.4 | vc15 | Visual C++ 2015–2019 |
+| 8.0 – 8.3 | vs16 | Visual C++ 2015–2022 |
+| 8.4+ | vs17 | Visual C++ 2015–2022 |
+
+Both TS (Thread Safe) and NTS builds are supported; phpvm prefers the TS zip
+and falls back to NTS. `phpvm ext install` detects the active build's
+TS/NTS + toolchain and downloads matching extension DLLs.
 
 ---
 

@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.9.1"
+PHPVM_VERSION="1.10.0"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -40,8 +40,9 @@ _phpvm_check_update() {
     # Only check once per day
     if [[ -f "$PHPVM_LAST_CHECK" ]]; then
         local last_ts now elapsed
-        last_ts=$(date -r "$PHPVM_LAST_CHECK" +%s 2>/dev/null || \
-                  stat -c %Y "$PHPVM_LAST_CHECK" 2>/dev/null || echo 0)
+        # GNU stat (-c) on Linux, BSD stat (-f) on macOS.
+        last_ts=$(stat -c %Y "$PHPVM_LAST_CHECK" 2>/dev/null || \
+                  stat -f %m "$PHPVM_LAST_CHECK" 2>/dev/null || echo 0)
         now=$(date +%s)
         elapsed=$(( now - last_ts ))
         [[ $elapsed -lt $PHPVM_CHECK_INTERVAL ]] && return
@@ -87,7 +88,7 @@ _phpvm_init() {
 _phpvm_use_path() {
     local bin="$PHPVM_CURRENT/bin"
     # Remove any existing phpvm path entries
-    PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$PHPVM_DIR" | paste -sd ':')
+    PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$PHPVM_DIR" | paste -sd ':' -)
     export PATH="$PHPVM_BIN:$bin:$PATH"
 }
 
@@ -166,7 +167,7 @@ _phpvm_auto() {
     if ! rc=$(_phpvm_find_rc); then
         if [[ -n "${PHPVM_AUTO_ACTIVE:-}" ]]; then
             local old="$PHPVM_VERSIONS/$PHPVM_AUTO_ACTIVE/bin"
-            PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':')
+            PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':' -)
             export PATH
             unset PHPVM_AUTO_ACTIVE
             [[ $silent -eq 0 ]] && _dim "Cleared auto PHP (no .phpvmrc upstream)."
@@ -191,7 +192,7 @@ _phpvm_auto() {
 
     if [[ -n "${PHPVM_AUTO_ACTIVE:-}" ]]; then
         local old="$PHPVM_VERSIONS/$PHPVM_AUTO_ACTIVE/bin"
-        PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':')
+        PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':' -)
     fi
 
     local new="$PHPVM_VERSIONS/$resolved/bin"
@@ -283,6 +284,13 @@ _phpvm_print_dep_install() {
             _dim "    libxml2-devel sqlite3-devel libopenssl-devel libcurl-devel \\"
             _dim "    oniguruma-devel libzip-devel zlib-devel readline-devel \\"
             _dim "    libsodium-devel"
+            ;;
+        brew)
+            _dim "  brew install \\"
+            _dim "    autoconf bison re2c pkg-config \\"
+            _dim "    openssl@3 libxml2 sqlite curl oniguruma libzip zlib readline \\"
+            _dim "    libpng jpeg webp freetype gmp libsodium gettext"
+            _dim "  (Xcode Command Line Tools required: xcode-select --install)"
             ;;
         *)
             _dim "  Please install: gcc make autoconf bison re2c pkg-config"
@@ -509,7 +517,8 @@ phpvm_install() {
     (
         cd "$src_dir" || { _err "Could not enter source directory: $src_dir"; exit 1; }
 
-        ./buildconf --force &>>"$PHPVM_LOG" 2>&1 || true  # needed only for git checkouts
+        # >> + 2>&1 (not &>>): macOS still ships bash 3.2, which can't parse &>>.
+        ./buildconf --force >>"$PHPVM_LOG" 2>&1 || true  # needed only for git checkouts
 
         _phpvm_run_logged "Configuring" ./configure "${configure_opts[@]}" \
             || { _err "Configure failed. See log: $PHPVM_LOG"; exit 1; }
@@ -573,7 +582,7 @@ _phpvm_older_patch_hint() {
     [[ -z "$older" ]] && return 0
 
     newest=$(echo "$older" | tail -1)
-    _dim "Older patch of ${ver%.*} still installed: $(echo "$older" | paste -sd ', ')"
+    _dim "Older patch of ${ver%.*} still installed: $(echo "$older" | paste -sd ', ' -)"
     _dim "Remove it with: phpvm uninstall $newest"
 }
 
@@ -1171,11 +1180,6 @@ phpvm_help() {
   COMPOSER
     phpvm composer                 Install Composer for active PHP version
 
-  LARAVEL QUICK SETUP
-    phpvm ext laravel              Enable all Laravel extensions (full)
-    phpvm ext laravel minimal      Required extensions only
-    phpvm ext laravel full         Required + recommended + Redis
-
   AUTO-SWITCH (.phpvmrc)
     phpvm auto                     Switch to the version named in .phpvmrc
     phpvm hook enable              Enable auto-switching on cd (bash/zsh)
@@ -1185,6 +1189,11 @@ phpvm_help() {
   SELF UPDATE
     phpvm upgrade                  Upgrade phpvm to latest version
     phpvm version                  Show current phpvm version
+
+  LARAVEL QUICK SETUP
+    phpvm ext laravel              Enable all Laravel extensions (full)
+    phpvm ext laravel minimal      Required extensions only
+    phpvm ext laravel full         Required + recommended + Redis
 
   EXTENSION MANAGEMENT
     phpvm ext list                 Show loaded extensions
@@ -1201,8 +1210,8 @@ phpvm_help() {
     phpvm ext install xdebug
     phpvm ext enable opcache
 
-  Install dir:  $PHPVM_DIR
-  Build log:    $PHPVM_LOG
+  Home:      $PHPVM_DIR
+  Build log: $PHPVM_LOG
 
 EOF
 }

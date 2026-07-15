@@ -15,11 +15,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.9.1"
+$PHPVM_VERSION = "1.10.0"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
 $PHPVM_BIN     = "$PHPVM_DIR\bin"
+$PHPVM_CACERT  = "$PHPVM_DIR\cacert.pem"
+$PHPVM_CACERT_URL = "https://curl.se/ca/cacert.pem"
 
 # -- Update checker (once per day, via version.txt) ---------------------------
 $PHPVM_UPDATE_URL   = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
@@ -121,10 +123,13 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
     if ($version -match '(\d+\.\d+\.\d+)') { $version = $Matches[1] }
     $short = $version -replace '^(\d+\.\d+)\..*', '$1'
 
-    $tsLine = ($raw | Select-String "Thread Safety" | Select-Object -First 1).ToString()
-    $isTS   = $tsLine -match "enabled"
+    # Both lines can be absent when php -i fails or emits garbage; .ToString()
+    # on the empty pipeline would throw a raw MethodInvocationException.
+    $tsLine = $raw | Select-String "Thread Safety" | Select-Object -First 1
+    $isTS   = $tsLine -and ($tsLine.ToString() -match "enabled")
 
-    $compLine = ($raw | Select-String "Compiler" | Select-Object -First 1).ToString()
+    $compLine = $raw | Select-String "Compiler" | Select-Object -First 1
+    $compLine = if ($compLine) { $compLine.ToString() } else { "" }
     $vs = switch -Regex ($compLine) {
         "MSVC17|VS17" { "vs17"; break }
         "MSVC16|VS16" { "vs16"; break }
@@ -156,6 +161,8 @@ function Get-PHPBuildInfo ([string]$phpExe = "") {
 # Per windows.php.net: 5.x -> vc11, 7.0-7.1 -> vc14, 7.2-7.4 -> vc15,
 # 8.0-8.3 -> vs16, 8.4+ -> vs17.
 function Get-VSVersion ([string]$ver) {
+    # Anything that isn't x.y... would blow up the [int] casts below.
+    if ($ver -notmatch '^\d+\.\d+') { return "vs17" }
     $major = [int]($ver -split '\.')[0]
     $minor = [int]($ver -split '\.')[1]
     if ($major -eq 5)                          { return "vc11" }
@@ -224,7 +231,11 @@ function Get-CurrentVersion {
     if (-not (Test-Path $CURRENT_LINK)) { return $null }
     $item = Get-Item $CURRENT_LINK -Force
     if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-        return Split-Path $item.Target -Leaf
+        # On PS 5.1 Target can be missing or empty for some reparse points;
+        # Split-Path $null would throw under StrictMode.
+        $target = if ($item.PSObject.Properties['Target']) { @($item.Target)[0] } else { $null }
+        if (-not $target) { return $null }
+        return Split-Path $target -Leaf
     }
     return $null
 }
@@ -337,6 +348,59 @@ function Unblock-PHPVMPath ([string]$path) {
     }
 }
 
+# -- CA bundle (curl.cainfo / openssl.cafile) ----------------------------------
+# Windows PHP builds ship no CA bundle, so every HTTPS request from PHP fails
+# with cURL error 60 until one is configured. One shared bundle in $PHPVM_DIR
+# serves all installed versions.
+
+# Ensure $PHPVM_CACERT exists; download the Mozilla bundle if missing (or -Force).
+# Best-effort: returns the bundle path, or $null when absent and undownloadable.
+# Never throws - an offline install must still succeed.
+function Get-CABundle ([switch]$Force) {
+    if ((Test-Path $PHPVM_CACERT) -and -not $Force) { return $PHPVM_CACERT }
+
+    Write-Step "Downloading CA bundle (curl.se/ca/cacert.pem) ..."
+    $tmp = "$env:TEMP\phpvm-cacert.pem"
+    try {
+        Invoke-Download $PHPVM_CACERT_URL $tmp
+        $head = Get-Content $tmp -TotalCount 200 -ErrorAction Stop
+        if (-not ($head -match "BEGIN CERTIFICATE")) { throw "not a PEM bundle" }
+        Move-Item $tmp $PHPVM_CACERT -Force
+        Write-Ok "CA bundle saved: $PHPVM_CACERT"
+    } catch {
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        Write-Warn "Could not fetch CA bundle: $_"
+        if (Test-Path $PHPVM_CACERT) { return $PHPVM_CACERT }
+        Write-Dim "HTTPS from PHP may fail with cURL error 60. Retry later: phpvm cacert update"
+        return $null
+    }
+    return $PHPVM_CACERT
+}
+
+# Point curl.cainfo and openssl.cafile at $bundlePath in raw php.ini content.
+# Uncomments/overwrites existing directives; appends a block when absent.
+function Set-IniCACert ([string]$content, [string]$bundlePath) {
+    foreach ($key in @("curl.cainfo", "openssl.cafile")) {
+        $pattern = "(?m)^;*\s*$([regex]::Escape($key))\s*=.*$"
+        $line    = "$key = `"$bundlePath`""
+        if ($content -match $pattern) {
+            $content = [regex]::Replace($content, $pattern, $line.Replace('$', '$$'))
+        } else {
+            $content = $content.TrimEnd() + "`r`n$line`r`n"
+        }
+    }
+    return $content
+}
+
+# Apply the shared bundle to one php.ini file. No-op if either is missing.
+function Update-IniCACert ([string]$iniPath, [string]$bundlePath) {
+    if (-not $bundlePath -or -not (Test-Path $iniPath)) { return $false }
+    $before = Get-Content $iniPath -Raw
+    $after  = Set-IniCACert $before $bundlePath
+    if ($after -ne $before) { $after | Set-Content $iniPath -NoNewline }
+    return $true
+}
+
 # Look up the expected SHA-256 for a PHP zip on windows.php.net.
 # Returns lowercase hex digest, or $null if no checksum is published.
 function Get-PHPZipHash ([string]$zipUrl) {
@@ -382,14 +446,16 @@ function Test-URLExists ([string]$url) {
 # ==============================================================================
 
 function Invoke-Install ([string]$ver, [string]$flag) {
-    # Accept --no-use in either position, matching the Linux arg loop.
+    # Accept flags in either position, matching the Linux arg loop.
     $noUse      = $false
+    $noCacert   = $false
     $positional = @()
     foreach ($a in @($ver, $flag)) {
-        if (-not $a)            { continue }
-        if ($a -eq "--no-use")  { $noUse = $true }
-        elseif ($a -like "-*")  { Write-Err "Unknown option: $a. Usage: phpvm install <version> [--no-use]"; return }
-        else                    { $positional += $a }
+        if (-not $a)               { continue }
+        if ($a -eq "--no-use")     { $noUse = $true }
+        elseif ($a -eq "--no-cacert") { $noCacert = $true }
+        elseif ($a -like "-*")     { Write-Err "Unknown option: $a. Usage: phpvm install <version> [--no-use] [--no-cacert]"; return }
+        else                       { $positional += $a }
     }
     $ver = if ($positional.Count -gt 0) { $positional[0] } else { "" }
 
@@ -483,6 +549,15 @@ function Invoke-Install ([string]$ver, [string]$flag) {
         $extPath = "$targetDir\ext"
         $content = $content -replace '(?m)^;?\s*extension_dir\s*=.*$', "extension_dir = `"$extPath`""
         $content | Set-Content $ini -NoNewline
+    }
+
+    # Windows PHP has no CA bundle -> HTTPS from PHP fails (cURL error 60).
+    # Point this version at the shared bundle, unless opted out.
+    if (-not $noCacert) {
+        $bundle = Get-CABundle
+        if ($bundle -and (Update-IniCACert $ini $bundle)) {
+            Write-Ok "CA bundle configured (curl.cainfo / openssl.cafile)."
+        }
     }
 
     Write-Ok "PHP $ver installed successfully."
@@ -788,17 +863,17 @@ function Show-PHPVMHookStatus {
 }
 
 function Invoke-Hook ([string]$sub) {
+    # enable/disable match the Linux verbs; install/uninstall kept as aliases.
     switch ($sub.ToLower()) {
-        'install'   { Install-PHPVMHook }
-        'uninstall' { Uninstall-PHPVMHook }
-        'remove'    { Uninstall-PHPVMHook }
+        { $_ -in 'enable', 'install' }              { Install-PHPVMHook }
+        { $_ -in 'disable', 'uninstall', 'remove' } { Uninstall-PHPVMHook }
         'status'    { Show-PHPVMHookStatus }
         default     {
             Write-Host ""
             Write-Host "  phpvm hook - manage the PowerShell auto-switch hook" -ForegroundColor Cyan
-            Write-Host "    phpvm hook install    Add the prompt hook to `$PROFILE"
-            Write-Host "    phpvm hook uninstall  Remove the hook"
-            Write-Host "    phpvm hook status     Check whether the hook is installed"
+            Write-Host "    phpvm hook enable     Enable .phpvmrc auto-switching (prompt hook in `$PROFILE)"
+            Write-Host "    phpvm hook disable    Disable the hook"
+            Write-Host "    phpvm hook status     Check whether the hook is enabled"
             Write-Host ""
         }
     }
@@ -1346,22 +1421,25 @@ function Show-Help {
 
   VERSION MANAGEMENT
     phpvm install   <version>      Download & install a PHP version
-                                     --no-use  install without switching to it
+                                     --no-use     install without switching to it
+                                     --no-cacert  skip CA bundle configuration
     phpvm use       <version>      Switch the active PHP version
     phpvm list                     List installed versions
     phpvm current                  Show active version info
     phpvm uninstall <version>      Remove a PHP version
     phpvm which                    Path to active php.exe
     phpvm ini                      Open active php.ini in Notepad
+    phpvm fix-ini                  Sync extension_dir & CA bundle in active php.ini
+    phpvm cacert [status|update]   Manage the shared CA bundle (HTTPS/TLS)
 
   COMPOSER
     phpvm composer                 Install Composer for active PHP version
 
   AUTO-SWITCH (.phpvmrc)
     phpvm auto                     Switch to the version named in .phpvmrc
-    phpvm hook install             Install the PowerShell prompt hook
-    phpvm hook uninstall           Remove the prompt hook
-    phpvm hook status              Check whether the hook is installed
+    phpvm hook enable              Enable auto-switching (PowerShell prompt hook)
+    phpvm hook disable             Disable the hook
+    phpvm hook status              Check whether the hook is enabled
 
   SELF UPDATE
     phpvm upgrade                  Upgrade phpvm to latest version
@@ -1421,7 +1499,42 @@ function Invoke-FixIni {
         Write-Ok "Added extension_dir -> $extPath"
     }
 
+    # Repair the CA bundle wiring too - fixes cURL error 60 on installs that
+    # predate the shared bundle.
+    $bundle = Get-CABundle
+    if ($bundle -and (Update-IniCACert $ini $bundle)) {
+        Write-Ok "CA bundle configured (curl.cainfo / openssl.cafile)."
+    }
+
     Write-Dim "Verify: phpvm ext list"
+}
+
+# phpvm cacert [status|update] - manage the shared CA bundle.
+function Invoke-Cacert ([string]$sub) {
+    switch ($sub.ToLower()) {
+        "update" {
+            $bundle = Get-CABundle -Force
+            if (-not $bundle) { return }
+            $cur = Get-CurrentVersion
+            if ($cur) {
+                if (Update-IniCACert "$VERSIONS_DIR\$cur\php.ini" $bundle) {
+                    Write-Ok "Active php.ini points at the refreshed bundle."
+                }
+            }
+        }
+        { $_ -in "", "status" } {
+            if (Test-Path $PHPVM_CACERT) {
+                $age = [int]((Get-Date) - (Get-Item $PHPVM_CACERT).LastWriteTime).TotalDays
+                Write-Ok "CA bundle: $PHPVM_CACERT  (updated $age day(s) ago)"
+                Write-Dim "Refresh with: phpvm cacert update"
+            } else {
+                Write-Warn "No CA bundle yet. Run: phpvm cacert update"
+            }
+        }
+        default {
+            Write-Err "Usage: phpvm cacert [status|update]"
+        }
+    }
 }
 
 
@@ -1487,7 +1600,7 @@ function Get-Levenshtein ([string]$a, [string]$b) {
 # Unknown command: suggest the nearest match instead of dumping the full help.
 function Invoke-Unknown ([string]$cmd) {
     $cmds = @("install","use","list","ls","current","uninstall","remove",
-              "which","ini","fix-ini","ext","composer","auto","hook",
+              "which","ini","fix-ini","cacert","ext","composer","auto","hook",
               "upgrade","update","version","help")
     $best = ""; $bestd = 99
     foreach ($c in $cmds) {
@@ -1517,6 +1630,7 @@ if (-not $env:PHPVM_NO_ENTRY) {
         "which"                         { Invoke-Which }
         "ini"                           { Invoke-Ini }
         "fix-ini"                       { Invoke-FixIni }
+        "cacert"                        { Invoke-Cacert  $SubOrVer }
         "ext"                           { Invoke-Ext $SubOrVer $Arg2 $Arg3 }
         "auto"                          { Invoke-Auto }
         "hook"                          { Invoke-Hook $SubOrVer }

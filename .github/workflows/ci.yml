@@ -58,6 +58,21 @@ jobs:
       - name: Bats (offline)
         run: bats tests/linux/
 
+  # Experimental (B12 spike): does phpvm.sh behave on macOS/BSD userland?
+  # Not a merge gate yet - failures inform the macOS backlog item.
+  macos:
+    name: macOS bats (experimental)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Install bats
+        run: brew install bats-core
+
+      - name: Bats (offline)
+        run: bats tests/linux/
+
   version-consistency:
     name: Version consistency
     runs-on: ubuntu-latest
