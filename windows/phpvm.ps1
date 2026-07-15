@@ -863,17 +863,17 @@ function Show-PHPVMHookStatus {
 }
 
 function Invoke-Hook ([string]$sub) {
+    # enable/disable match the Linux verbs; install/uninstall kept as aliases.
     switch ($sub.ToLower()) {
-        'install'   { Install-PHPVMHook }
-        'uninstall' { Uninstall-PHPVMHook }
-        'remove'    { Uninstall-PHPVMHook }
+        { $_ -in 'enable', 'install' }              { Install-PHPVMHook }
+        { $_ -in 'disable', 'uninstall', 'remove' } { Uninstall-PHPVMHook }
         'status'    { Show-PHPVMHookStatus }
         default     {
             Write-Host ""
             Write-Host "  phpvm hook - manage the PowerShell auto-switch hook" -ForegroundColor Cyan
-            Write-Host "    phpvm hook install    Add the prompt hook to `$PROFILE"
-            Write-Host "    phpvm hook uninstall  Remove the hook"
-            Write-Host "    phpvm hook status     Check whether the hook is installed"
+            Write-Host "    phpvm hook enable     Enable .phpvmrc auto-switching (prompt hook in `$PROFILE)"
+            Write-Host "    phpvm hook disable    Disable the hook"
+            Write-Host "    phpvm hook status     Check whether the hook is enabled"
             Write-Host ""
         }
     }
@@ -1429,6 +1429,7 @@ function Show-Help {
     phpvm uninstall <version>      Remove a PHP version
     phpvm which                    Path to active php.exe
     phpvm ini                      Open active php.ini in Notepad
+    phpvm fix-ini                  Sync extension_dir & CA bundle in active php.ini
     phpvm cacert [status|update]   Manage the shared CA bundle (HTTPS/TLS)
 
   COMPOSER
@@ -1436,9 +1437,9 @@ function Show-Help {
 
   AUTO-SWITCH (.phpvmrc)
     phpvm auto                     Switch to the version named in .phpvmrc
-    phpvm hook install             Install the PowerShell prompt hook
-    phpvm hook uninstall           Remove the prompt hook
-    phpvm hook status              Check whether the hook is installed
+    phpvm hook enable              Enable auto-switching (PowerShell prompt hook)
+    phpvm hook disable             Disable the hook
+    phpvm hook status              Check whether the hook is enabled
 
   SELF UPDATE
     phpvm upgrade                  Upgrade phpvm to latest version

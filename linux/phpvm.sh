@@ -1180,11 +1180,6 @@ phpvm_help() {
   COMPOSER
     phpvm composer                 Install Composer for active PHP version
 
-  LARAVEL QUICK SETUP
-    phpvm ext laravel              Enable all Laravel extensions (full)
-    phpvm ext laravel minimal      Required extensions only
-    phpvm ext laravel full         Required + recommended + Redis
-
   AUTO-SWITCH (.phpvmrc)
     phpvm auto                     Switch to the version named in .phpvmrc
     phpvm hook enable              Enable auto-switching on cd (bash/zsh)
@@ -1194,6 +1189,11 @@ phpvm_help() {
   SELF UPDATE
     phpvm upgrade                  Upgrade phpvm to latest version
     phpvm version                  Show current phpvm version
+
+  LARAVEL QUICK SETUP
+    phpvm ext laravel              Enable all Laravel extensions (full)
+    phpvm ext laravel minimal      Required extensions only
+    phpvm ext laravel full         Required + recommended + Redis
 
   EXTENSION MANAGEMENT
     phpvm ext list                 Show loaded extensions
@@ -1210,8 +1210,8 @@ phpvm_help() {
     phpvm ext install xdebug
     phpvm ext enable opcache
 
-  Install dir:  $PHPVM_DIR
-  Build log:    $PHPVM_LOG
+  Home:      $PHPVM_DIR
+  Build log: $PHPVM_LOG
 
 EOF
 }
