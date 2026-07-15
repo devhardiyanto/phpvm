@@ -517,7 +517,8 @@ phpvm_install() {
     (
         cd "$src_dir" || { _err "Could not enter source directory: $src_dir"; exit 1; }
 
-        ./buildconf --force &>>"$PHPVM_LOG" 2>&1 || true  # needed only for git checkouts
+        # >> + 2>&1 (not &>>): macOS still ships bash 3.2, which can't parse &>>.
+        ./buildconf --force >>"$PHPVM_LOG" 2>&1 || true  # needed only for git checkouts
 
         _phpvm_run_logged "Configuring" ./configure "${configure_opts[@]}" \
             || { _err "Configure failed. See log: $PHPVM_LOG"; exit 1; }
