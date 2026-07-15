@@ -88,7 +88,7 @@ _phpvm_init() {
 _phpvm_use_path() {
     local bin="$PHPVM_CURRENT/bin"
     # Remove any existing phpvm path entries
-    PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$PHPVM_DIR" | paste -sd ':')
+    PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$PHPVM_DIR" | paste -sd ':' -)
     export PATH="$PHPVM_BIN:$bin:$PATH"
 }
 
@@ -167,7 +167,7 @@ _phpvm_auto() {
     if ! rc=$(_phpvm_find_rc); then
         if [[ -n "${PHPVM_AUTO_ACTIVE:-}" ]]; then
             local old="$PHPVM_VERSIONS/$PHPVM_AUTO_ACTIVE/bin"
-            PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':')
+            PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':' -)
             export PATH
             unset PHPVM_AUTO_ACTIVE
             [[ $silent -eq 0 ]] && _dim "Cleared auto PHP (no .phpvmrc upstream)."
@@ -192,7 +192,7 @@ _phpvm_auto() {
 
     if [[ -n "${PHPVM_AUTO_ACTIVE:-}" ]]; then
         local old="$PHPVM_VERSIONS/$PHPVM_AUTO_ACTIVE/bin"
-        PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':')
+        PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':' -)
     fi
 
     local new="$PHPVM_VERSIONS/$resolved/bin"
@@ -582,7 +582,7 @@ _phpvm_older_patch_hint() {
     [[ -z "$older" ]] && return 0
 
     newest=$(echo "$older" | tail -1)
-    _dim "Older patch of ${ver%.*} still installed: $(echo "$older" | paste -sd ', ')"
+    _dim "Older patch of ${ver%.*} still installed: $(echo "$older" | paste -sd ', ' -)"
     _dim "Remove it with: phpvm uninstall $newest"
 }
 
