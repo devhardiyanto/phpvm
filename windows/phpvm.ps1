@@ -1488,7 +1488,7 @@ function Show-Help {
 
   COMPOSER / WP-CLI
     phpvm composer                 Install Composer for active PHP version
-    phpvm wp-cli                   Install WP-CLI (global `wp` command)
+    phpvm wp-cli                   Install WP-CLI (global 'wp' command)
 
   AUTO-SWITCH (.phpvmrc)
     phpvm auto                     Switch to the version named in .phpvmrc
