@@ -1290,13 +1290,13 @@ phpvm_hook() {
     local sub="${1:-status}"
     local flag="$PHPVM_DIR/.auto-hook"
     case "$sub" in
-        enable|install)
+        enable)
             mkdir -p "$PHPVM_DIR"
             touch "$flag"
             _ok "Hook enabled. Restart your shell, or run:"
             _dim "  source \"$PHPVM_DIR/phpvm.sh\""
             ;;
-        disable|uninstall|remove)
+        disable)
             if [[ -f "$flag" ]]; then
                 rm -f "$flag"
                 _ok "Hook disabled. Restart your shell to fully unregister."

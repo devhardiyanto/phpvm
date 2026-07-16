@@ -858,15 +858,14 @@ function Show-PHPVMHookStatus {
     if ($content -and $content.Contains($script:PHPVM_HOOK_MARKER)) {
         Write-Ok "Hook installed in $profilePath"
     } else {
-        Write-Dim "Hook not installed. Run: phpvm hook install"
+        Write-Dim "Hook not installed. Run: phpvm hook enable"
     }
 }
 
 function Invoke-Hook ([string]$sub) {
-    # enable/disable match the Linux verbs; install/uninstall kept as aliases.
     switch ($sub.ToLower()) {
-        { $_ -in 'enable', 'install' }              { Install-PHPVMHook }
-        { $_ -in 'disable', 'uninstall', 'remove' } { Uninstall-PHPVMHook }
+        'enable'    { Install-PHPVMHook }
+        'disable'   { Uninstall-PHPVMHook }
         'status'    { Show-PHPVMHookStatus }
         default     {
             Write-Host ""
