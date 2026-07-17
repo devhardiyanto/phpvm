@@ -82,6 +82,71 @@ EOF
     [[ "$output" == *"already installed"* ]]
 }
 
+# ---------- phpvm_wp_cli ----------
+
+# Shell-function stub for curl: serves a fake phar for the download and
+# $FAKE_WP_SHA for the .sha512 URL. `command -v curl` resolves functions too.
+_stub_curl() {
+    curl() {
+        if [[ "$*" == *".sha512"* ]]; then
+            printf '%s  wp-cli.phar\n' "$FAKE_WP_SHA"
+            return 0
+        fi
+        local out="" prev=""
+        for a in "$@"; do
+            [[ "$prev" == "-o" ]] && out="$a"
+            prev="$a"
+        done
+        [[ -n "$out" ]] && echo "fake phar" > "$out"
+        return 0
+    }
+}
+
+@test "wp-cli: errors when no active version" {
+    eval "_phpvm_current_version() { echo ''; }"
+    run phpvm_wp_cli
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"No active PHP version"* ]]
+}
+
+@test "wp-cli: no-op when global shim + phar already present" {
+    _fake_php_install 8.3.0
+    mkdir -p "$PHPVM_BIN"
+    touch "$PHPVM_DIR/wp-cli.phar"
+    cat > "$PHPVM_BIN/wp" <<'EOF'
+#!/usr/bin/env sh
+EOF
+    chmod +x "$PHPVM_BIN/wp"
+    run phpvm_wp_cli
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already installed"* ]]
+}
+
+@test "wp-cli: downloads phar, verifies hash, writes wp shim" {
+    _fake_php_install 8.3.0
+    _stub_curl
+    export FAKE_WP_SHA="cafe123"
+    export FAKE_PHP_HASH="cafe123"
+    run phpvm_wp_cli
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WP-CLI installed"* ]]
+    [ -f "$PHPVM_DIR/wp-cli.phar" ]
+    [ -x "$PHPVM_BIN/wp" ]
+    grep -q "wp-cli.phar" "$PHPVM_BIN/wp"
+}
+
+@test "wp-cli: removes phar and writes no shim on hash mismatch" {
+    _fake_php_install 8.3.0
+    _stub_curl
+    export FAKE_WP_SHA="cafe123"
+    export FAKE_PHP_HASH="deadbeef"
+    run phpvm_wp_cli
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"SHA-512 mismatch"* ]]
+    [ ! -f "$PHPVM_DIR/wp-cli.phar" ]
+    [ ! -f "$PHPVM_BIN/wp" ]
+}
+
 # ---------- phpvm_fix_ini ----------
 
 @test "fix-ini: errors when no active version" {
@@ -165,6 +230,13 @@ EOF
 @test "dispatch: 'phpvm composer' routes to phpvm_composer" {
     eval "_phpvm_current_version() { echo ''; }"
     run phpvm composer
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"No active PHP version"* ]]
+}
+
+@test "dispatch: 'phpvm wp-cli' routes to phpvm_wp_cli" {
+    eval "_phpvm_current_version() { echo ''; }"
+    run phpvm wp-cli
     [ "$status" -ne 0 ]
     [[ "$output" == *"No active PHP version"* ]]
 }
