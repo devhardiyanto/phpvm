@@ -122,13 +122,13 @@ echo "8.3" > .phpvmrc
 
 Then run `phpvm auto` from anywhere in the project — phpvm walks up to find the nearest `.phpvmrc` and prepends that version to your shell `PATH` (session only, your global `phpvm use` is untouched).
 
-For hands-off switching, install the PowerShell prompt hook:
+For hands-off switching, enable the PowerShell prompt hook:
 
 ```powershell
-phpvm hook install      # adds a snippet to $PROFILE
+phpvm hook enable       # adds a snippet to $PROFILE
 # restart PowerShell, then `cd` between projects - phpvm auto-switches per directory
-phpvm hook status       # check whether the hook is installed
-phpvm hook uninstall    # remove the hook
+phpvm hook status       # check whether the hook is enabled
+phpvm hook disable      # remove the hook
 ```
 
 `.phpvmrc` accepts a full semver (`8.3.0`), a major.minor (`8.3` — picks the highest installed patch), or a leading `v` (`v8.3.0`). Lines starting with `#` are comments. If the version is not installed locally, phpvm warns but never auto-installs.
@@ -202,6 +202,14 @@ phpvm composer                 # installs a single global composer that follows 
 ```
 
 The installer signature is verified against `composer.github.io/installer.sig` (SHA-384) before execution. Composer is installed **once** — `composer.phar` in `~/.phpvm/` and a shim in `~/.phpvm/bin/` (on PATH) that runs whatever PHP is active. Switch versions with `phpvm use <other>` and the same `composer` keeps working; no need to re-run `phpvm composer`. (Composer 2.x requires PHP ≥ 7.2.5, so an extremely old active version won't run the latest composer.)
+
+### WP-CLI
+
+```bash
+phpvm wp-cli                   # installs a single global `wp` command that follows the active PHP version
+```
+
+Same global-install model as Composer: `wp-cli.phar` lands in `~/.phpvm/` and a `wp` shim in `~/.phpvm/bin/` (on PATH) runs whatever PHP is active — switch with `phpvm use <other>` and `wp` keeps working. The phar is verified against the upstream `wp-cli.phar.sha512` checksum (SHA-512 — WP-CLI publishes SHA-512, unlike Composer's SHA-384 installer signature). WP-CLI itself requires PHP ≥ 7.2.24 and reports clearly if the active version is older.
 
 ### Fix `php.ini` extension_dir
 
@@ -343,7 +351,7 @@ your distro, and check the tail of `~/.phpvm/build.log` for the first error.
 
 ### `.phpvmrc` doesn't auto-switch
 
-The shell hook isn't active. Windows: `phpvm hook install`, then open a new
+The shell hook isn't active. Windows: `phpvm hook enable`, then open a new
 terminal. Linux: make sure your `~/.bashrc` / `~/.zshrc` sources
 `~/.phpvm/phpvm.sh`. Note that auto-switch never installs missing versions —
 it only switches between installed ones.
