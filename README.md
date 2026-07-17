@@ -203,6 +203,14 @@ phpvm composer                 # installs a single global composer that follows 
 
 The installer signature is verified against `composer.github.io/installer.sig` (SHA-384) before execution. Composer is installed **once** — `composer.phar` in `~/.phpvm/` and a shim in `~/.phpvm/bin/` (on PATH) that runs whatever PHP is active. Switch versions with `phpvm use <other>` and the same `composer` keeps working; no need to re-run `phpvm composer`. (Composer 2.x requires PHP ≥ 7.2.5, so an extremely old active version won't run the latest composer.)
 
+### WP-CLI
+
+```bash
+phpvm wp-cli                   # installs a single global `wp` command that follows the active PHP version
+```
+
+Same global-install model as Composer: `wp-cli.phar` lands in `~/.phpvm/` and a `wp` shim in `~/.phpvm/bin/` (on PATH) runs whatever PHP is active — switch with `phpvm use <other>` and `wp` keeps working. The phar is verified against the upstream `wp-cli.phar.sha512` checksum (SHA-512 — WP-CLI publishes SHA-512, unlike Composer's SHA-384 installer signature). WP-CLI itself requires PHP ≥ 7.2.24 and reports clearly if the active version is older.
+
 ### Fix `php.ini` extension_dir
 
 ```bash
