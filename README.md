@@ -83,104 +83,56 @@ phpvm which                # path to active php binary
 phpvm ini                  # open php.ini in editor
 ```
 
-A successful `phpvm install` automatically activates the freshly installed
-version, so you can skip a separate `phpvm use` for the common case. Pass
-`--no-use` to install a version in the background without switching to it.
-
-Long installs report live progress: a download bar on Windows, and a spinner
-with elapsed time over the `configure` / `make` / `make install` steps on Linux.
-Both are drawn on stderr and are suppressed automatically when output is not a
-terminal, so piping and CI logs stay clean.
+A successful `phpvm install` activates the new version automatically — pass
+`--no-use` to skip. Long installs show live progress (download bar on Windows,
+build spinner on Linux), suppressed when output is not a terminal.
 
 ### CA bundle (Windows)
 
-Windows PHP builds ship without a CA bundle, so out of the box every HTTPS
-request from PHP fails with `cURL error 60`. On install, phpvm downloads the
-[Mozilla CA bundle](https://curl.se/docs/caextract.html) once to
-`~/.phpvm/cacert.pem` and points the new version's `curl.cainfo` and
-`openssl.cafile` at it. The bundle is shared, so switching PHP versions never
-loses the fix.
+Windows PHP builds ship without a CA bundle, so HTTPS from PHP fails with
+`cURL error 60`. phpvm downloads the [Mozilla CA bundle](https://curl.se/docs/caextract.html)
+once to `~/.phpvm/cacert.pem` and wires every installed version to it (details
+under Troubleshooting). Linux is unaffected — source builds use the distro's
+cert store.
 
 ```powershell
 phpvm cacert               # show bundle status (path + age)
 phpvm cacert update        # refresh the bundle from curl.se
 phpvm install 8.3 --no-cacert   # opt out if you manage your own bundle
-phpvm fix-ini              # re-apply to an existing install
 ```
 
-If the download fails (offline install), phpvm warns and continues — run
-`phpvm cacert update` later. Linux is unaffected: source builds use the
-distro's system certificate store.
-
-### Auto-Switch with `.phpvmrc` (Windows)
+### Auto-Switch with `.phpvmrc`
 
 Drop a `.phpvmrc` file in your project root containing the PHP version you want:
 
 ```bash
 echo "8.3" > .phpvmrc
+phpvm auto                 # one-shot switch from anywhere in the project
 ```
 
-Then run `phpvm auto` from anywhere in the project — phpvm walks up to find the nearest `.phpvmrc` and prepends that version to your shell `PATH` (session only, your global `phpvm use` is untouched).
+`phpvm auto` walks up to the nearest `.phpvmrc` and prepends that version to the shell `PATH` (session only — your global `phpvm use` is untouched). It accepts a full semver (`8.3.0`), a major.minor (`8.3` — picks the highest installed patch), or a leading `v` (`v8.3.0`); lines starting with `#` are comments. If the version is not installed locally, phpvm warns but never auto-installs.
 
-For hands-off switching, enable the PowerShell prompt hook:
-
-```powershell
-phpvm hook enable       # adds a snippet to $PROFILE
-# restart PowerShell, then `cd` between projects - phpvm auto-switches per directory
-phpvm hook status       # check whether the hook is enabled
-phpvm hook disable      # remove the hook
-```
-
-`.phpvmrc` accepts a full semver (`8.3.0`), a major.minor (`8.3` — picks the highest installed patch), or a leading `v` (`v8.3.0`). Lines starting with `#` are comments. If the version is not installed locally, phpvm warns but never auto-installs.
-
-### Auto-Switch with `.phpvmrc` (Linux)
-
-Same `.phpvmrc` file works on Linux — the format is identical.
+For hands-off switching on every directory change, enable the hook:
 
 ```bash
-echo "8.3" > .phpvmrc
-phpvm auto          # one-shot switch from the current directory
+phpvm hook enable          # Windows: prompt hook in $PROFILE | Linux: chpwd (zsh) / PROMPT_COMMAND (bash)
+phpvm hook status          # check whether the hook is enabled
+phpvm hook disable         # remove the hook
 ```
 
-For automatic switching on every `cd`, enable the shell hook:
-
-```bash
-phpvm hook enable       # writes $PHPVM_DIR/.auto-hook flag
-exec $SHELL             # or restart your terminal
-```
-
-phpvm registers the hook in the shell it detects:
-
-| Shell | Mechanism |
-|---|---|
-| zsh | `add-zsh-hook chpwd _phpvm_auto` — runs on every directory change |
-| bash | `PROMPT_COMMAND="_phpvm_auto -s; ..."` — runs before every prompt |
-
-Manage with `phpvm hook status` / `phpvm hook disable`. Because `phpvm.sh` is already sourced into your shell rc, there is no separate file edit step — the hook activates the next time the shell loads.
+Restart your terminal after enabling (Linux: or `exec $SHELL`).
 
 ### Extension Management
 
 ```bash
-# List / inspect
 phpvm ext list             # all bundled extensions (ON/OFF)
 phpvm ext loaded           # currently loaded (php -m)
 phpvm ext info redis       # details about an extension
-
-# Enable/disable bundled extensions (edit php.ini)
-phpvm ext enable  mbstring
-phpvm ext enable  pdo_mysql
-phpvm ext enable  curl
-phpvm ext enable  zip
+phpvm ext enable mbstring  # enable a bundled extension (edits php.ini)
 phpvm ext disable pdo_sqlite
-
-# Install PECL extensions
-phpvm ext install redis
-phpvm ext install imagick
-phpvm ext install mongodb
+phpvm ext install redis    # install from PECL
 phpvm ext install mongodb 1.17.0   # specific version
-
-# XDebug (Windows: from xdebug.org | Linux: via PECL)
-phpvm ext install xdebug
+phpvm ext install xdebug   # Windows: from xdebug.org | Linux: via PECL
 ```
 
 ### Laravel quick setup
@@ -201,7 +153,7 @@ Already-loaded extensions are reported as `already ON` and skipped. On Linux, ex
 phpvm composer                 # installs a single global composer that follows the active PHP version
 ```
 
-The installer signature is verified against `composer.github.io/installer.sig` (SHA-384) before execution. Composer is installed **once** — `composer.phar` in `~/.phpvm/` and a shim in `~/.phpvm/bin/` (on PATH) that runs whatever PHP is active. Switch versions with `phpvm use <other>` and the same `composer` keeps working; no need to re-run `phpvm composer`. (Composer 2.x requires PHP ≥ 7.2.5, so an extremely old active version won't run the latest composer.)
+Installed **once**: `composer.phar` in `~/.phpvm/` plus a shim in `~/.phpvm/bin/` (on PATH) that runs whatever PHP is active, so `composer` follows `phpvm use` without reinstalling. The installer is verified against `composer.github.io/installer.sig` (SHA-384). Composer 2.x requires PHP ≥ 7.2.5.
 
 ### WP-CLI
 
@@ -209,7 +161,7 @@ The installer signature is verified against `composer.github.io/installer.sig` (
 phpvm wp-cli                   # installs a single global `wp` command that follows the active PHP version
 ```
 
-Same global-install model as Composer: `wp-cli.phar` lands in `~/.phpvm/` and a `wp` shim in `~/.phpvm/bin/` (on PATH) runs whatever PHP is active — switch with `phpvm use <other>` and `wp` keeps working. The phar is verified against the upstream `wp-cli.phar.sha512` checksum (SHA-512 — WP-CLI publishes SHA-512, unlike Composer's SHA-384 installer signature). WP-CLI itself requires PHP ≥ 7.2.24 and reports clearly if the active version is older.
+Same global model as Composer: `wp-cli.phar` plus a `wp` shim that follows the active PHP version. The phar is verified against the upstream `wp-cli.phar.sha512` checksum (SHA-512 — not a copy-paste error; WP-CLI publishes SHA-512 where Composer uses SHA-384). WP-CLI requires PHP ≥ 7.2.24.
 
 ### Fix `php.ini` extension_dir
 
@@ -255,21 +207,6 @@ sudo apt-get install -y \
 
 ---
 
-## Repository Structure
-
-```
-phpvm/
-├── windows/
-│   ├── phpvm.ps1          # main script
-│   ├── install.ps1        # installer
-│   └── uninstall.ps1      # uninstaller
-├── linux/
-│   ├── phpvm.sh           # main script (sourced in .bashrc)
-│   ├── install.sh         # curl installer
-│   └── uninstall.sh       # curl uninstaller
-└── README.md
-```
-
 ## Install Directory Structure
 
 ```
@@ -296,7 +233,6 @@ phpvm/
 | `EDITOR` | `nano` | Editor used by `phpvm ini` (Linux) |
 | `PHPVM_SKIP_HASH` | _unset_ | When set to `1`, skip SHA-256 verification on Windows installs (use for content-rewriting corporate proxies) |
 | `PHPVM_NO_UPDATE_CHECK` | _unset_ | When set, skip the daily phpvm update check |
-| `PHPVM_AUTO_ACTIVE` | _unset_ | Internal: tracks the version currently pinned by `phpvm auto` in the current shell |
 
 ---
 
