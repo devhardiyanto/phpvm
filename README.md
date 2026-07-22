@@ -101,6 +101,20 @@ phpvm cacert update        # refresh the bundle from curl.se
 phpvm install 8.3 --no-cacert   # opt out if you manage your own bundle
 ```
 
+### Diagnostics
+
+`phpvm doctor` runs a read-only health check and points at the command that
+fixes each finding — it never changes anything.
+
+```bash
+phpvm doctor
+```
+
+Checks: active version, whether `php` on PATH resolves to phpvm (catches
+XAMPP/Laragon/WAMP shadowing), `extension_dir` vs the active build, and —
+per OS — the CA bundle + VC++ runtime (Windows) or openssl + build toolchain
+(Linux). Start here when something behaves unexpectedly.
+
 ### Auto-Switch with `.phpvmrc`
 
 Drop a `.phpvmrc` file in your project root containing the PHP version you want:
@@ -260,7 +274,8 @@ vs16/vs17 builds need the 2015–2022 x64 redist). Download:
 
 ### `php -v` shows the wrong version (Windows)
 
-Another PHP on PATH (XAMPP, Laragon, Herd) is shadowing phpvm. Check with
+Another PHP on PATH (XAMPP, Laragon, Herd) is shadowing phpvm. Run
+`phpvm doctor` to detect it, or check with
 `phpvm which` — if the path isn't `~\.phpvm\current\php.exe`, move
 `%USERPROFILE%\.phpvm\current` above the other entry in your User PATH, or
 remove the other entry.

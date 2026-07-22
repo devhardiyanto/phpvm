@@ -8,7 +8,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$PHPVM_VERSION = "1.11.0"
+$PHPVM_VERSION = "1.12.0"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $PHPVM_BIN     = "$PHPVM_DIR\bin"
 

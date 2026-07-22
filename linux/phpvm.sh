@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.11.0"
+PHPVM_VERSION="1.12.0"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -472,13 +472,25 @@ phpvm_install() {
     # Configure
     mkdir -p "$target"
 
+    # www-data doesn't exist on macOS; its stock web user is _www. Only affects
+    # the default user baked into php-fpm.conf, not the CLI build.
+    local fpm_user="www-data"
+    [[ "$(uname -s)" == "Darwin" ]] && fpm_user="_www"
+
+    # gettext is keg-only on Homebrew: libintl.h isn't on the default include
+    # path, so --with-gettext needs the explicit prefix. Linux has it in glibc.
+    local gettext_opt="--with-gettext"
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew &>/dev/null; then
+        gettext_opt="--with-gettext=$(brew --prefix gettext)"
+    fi
+
     local configure_opts=(
         "--prefix=$target"
         "--with-config-file-path=$target/etc"
         "--with-config-file-scan-dir=$target/etc/conf.d"
         "--enable-fpm"
-        "--with-fpm-user=www-data"
-        "--with-fpm-group=www-data"
+        "--with-fpm-user=$fpm_user"
+        "--with-fpm-group=$fpm_user"
         "--enable-mbstring"
         "--enable-intl"
         "--enable-opcache"
@@ -500,7 +512,7 @@ phpvm_install() {
         "--with-jpeg"
         "--with-webp"
         "--with-freetype"
-        "--with-gettext"
+        "$gettext_opt"
         "--with-gmp"
         "--with-pgsql"
         "--with-pdo-pgsql"
@@ -516,6 +528,18 @@ phpvm_install() {
     # directory — which is then deleted, leaving them in a dangling cwd.
     (
         cd "$src_dir" || { _err "Could not enter source directory: $src_dir"; exit 1; }
+
+        # macOS: Homebrew ships openssl@3/curl/zlib/... as keg-only, so pkg-config
+        # can't find them on the default path. Prepend their pkgconfig dirs so
+        # --with-openssl et al. resolve. No-op on Linux.
+        if [[ "$(uname -s)" == "Darwin" ]] && command -v brew &>/dev/null; then
+            brew_prefix="$(brew --prefix)"
+            for keg in openssl@3 curl zlib libzip icu4c oniguruma readline libxml2 sqlite; do
+                [[ -d "$brew_prefix/opt/$keg/lib/pkgconfig" ]] && \
+                    PKG_CONFIG_PATH="$brew_prefix/opt/$keg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+            done
+            export PKG_CONFIG_PATH
+        fi
 
         # >> + 2>&1 (not &>>): macOS still ships bash 3.2, which can't parse &>>.
         ./buildconf --force >>"$PHPVM_LOG" 2>&1 || true  # needed only for git checkouts
@@ -689,6 +713,86 @@ phpvm_which() {
     else
         _warn "php not in PATH"
     fi
+}
+
+# ==============================================================================
+#  phpvm doctor  — read-only health check (never mutates state)
+# ==============================================================================
+phpvm_doctor() {
+    echo ""
+    echo -e "  \033[36mphpvm doctor — environment health check\033[0m"
+    echo -e "  \033[36m─────────────────────────────────────────────────────────\033[0m"
+
+    local ok=0 warn=0
+    _dok()  { printf '  \033[32m[ok]   %s\033[0m\n' "$*"; ok=$((ok+1)); }
+    _dwarn(){ printf '  \033[33m[warn] %s\033[0m\n' "$*"; warn=$((warn+1)); }
+
+    # 1. Active version + symlink health.
+    local cur
+    cur=$(_phpvm_current_version)
+    if [[ -n "$cur" ]]; then
+        _dok "Active PHP version: $cur"
+    else
+        _dwarn "No active PHP version. Run: phpvm use <version>"
+    fi
+
+    # 2. PATH: whichever php resolves first is what runs.
+    if command -v php &>/dev/null; then
+        local php_path
+        php_path=$(command -v php)
+        case "$php_path" in
+            "$PHPVM_CURRENT"/*|"$PHPVM_BIN"/*|"$PHPVM_VERSIONS"/*)
+                _dok "'php' resolves to phpvm: $php_path" ;;
+            *)
+                _dwarn "'php' resolves to a non-phpvm install: $php_path"
+                _dim "Ensure $PHPVM_DIR is sourced in your shell rc, then open a new shell." ;;
+        esac
+    else
+        _dwarn "No 'php' on PATH. Run: phpvm use <version> (and source phpvm.sh in your rc)."
+    fi
+
+    # 3. extension_dir readable for the active build.
+    if [[ -n "$cur" ]]; then
+        local ext_dir
+        ext_dir=$(php -r "echo ini_get('extension_dir');" 2>/dev/null)
+        if [[ -n "$ext_dir" && -d "$ext_dir" ]]; then
+            _dok "extension_dir present: $ext_dir"
+        else
+            _dwarn "extension_dir not found or unreadable for active version."
+            _dim "Fix with: phpvm fix-ini"
+        fi
+    fi
+
+    # 4. OpenSSL in PHP (HTTPS for composer / ext downloads).
+    if [[ -n "$cur" ]] && php -m 2>/dev/null | grep -qi '^openssl$'; then
+        _dok "openssl extension loaded (HTTPS OK)."
+    elif [[ -n "$cur" ]]; then
+        _dwarn "openssl not loaded — composer/HTTPS may fail."
+        _dim "Enable with: phpvm ext enable openssl"
+    fi
+
+    # 5. Build toolchain (needed for future installs — build from source).
+    local missing=()
+    local t
+    for t in gcc make autoconf bison re2c pkg-config; do
+        command -v "$t" &>/dev/null || missing+=("$t")
+    done
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        _dok "Build toolchain present (install/build ready)."
+    else
+        _dwarn "Missing build tools: ${missing[*]}"
+        _dim "See: phpvm deps"
+    fi
+
+    echo ""
+    if [[ $warn -eq 0 ]]; then
+        _ok "All checks passed ($ok ok)."
+    else
+        _warn "$warn warning(s), $ok ok. See fixes above."
+    fi
+    echo ""
+
+    unset -f _dok _dwarn 2>/dev/null
 }
 
 # ==============================================================================
@@ -1243,6 +1347,7 @@ phpvm_help() {
     phpvm ini                      Open active php.ini in \$EDITOR
     phpvm fix-ini                  Sync extension_dir in active php.ini
     phpvm deps                     Print dependency install command
+    phpvm doctor                   Diagnose PATH, extension_dir, openssl, toolchain
 
   COMPOSER / WP-CLI
     phpvm composer                 Install Composer for active PHP version
@@ -1453,6 +1558,7 @@ phpvm() {
         current)               phpvm_current ;;
         uninstall|remove)      phpvm_uninstall "$@" ;;
         which)                 phpvm_which ;;
+        doctor)                phpvm_doctor ;;
         ini)                   phpvm_ini ;;
         deps)                  phpvm_deps ;;
         ext)                   phpvm_ext       "$@" ;;
