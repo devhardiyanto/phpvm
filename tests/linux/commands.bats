@@ -421,3 +421,26 @@ EOF
     [[ "$output" == *"Older patch of 8.5 still installed: 8.5.6"* ]]
     [[ "$output" == *"phpvm uninstall 8.5.6"* ]]
 }
+
+# ---------- phpvm_doctor ----------
+
+@test "doctor: warns when no active version" {
+    eval "_phpvm_current_version() { echo ''; }"
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"environment health check"* ]]
+    [[ "$output" == *"No active PHP version"* ]]
+    [[ "$output" == *"warning(s)"* ]]
+}
+
+@test "doctor: reports active version, ext_dir and openssl" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    export FAKE_PHP_EXTS="Core openssl"
+    export PATH="$PHPVM_VERSIONS/8.3.0/bin:$PATH"
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Active PHP version: 8.3.0"* ]]
+    [[ "$output" == *"extension_dir present"* ]]
+    [[ "$output" == *"openssl extension loaded"* ]]
+}
