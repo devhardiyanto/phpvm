@@ -477,6 +477,13 @@ phpvm_install() {
     local fpm_user="www-data"
     [[ "$(uname -s)" == "Darwin" ]] && fpm_user="_www"
 
+    # gettext is keg-only on Homebrew: libintl.h isn't on the default include
+    # path, so --with-gettext needs the explicit prefix. Linux has it in glibc.
+    local gettext_opt="--with-gettext"
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew &>/dev/null; then
+        gettext_opt="--with-gettext=$(brew --prefix gettext)"
+    fi
+
     local configure_opts=(
         "--prefix=$target"
         "--with-config-file-path=$target/etc"
@@ -505,7 +512,7 @@ phpvm_install() {
         "--with-jpeg"
         "--with-webp"
         "--with-freetype"
-        "--with-gettext"
+        "$gettext_opt"
         "--with-gmp"
         "--with-pgsql"
         "--with-pdo-pgsql"
