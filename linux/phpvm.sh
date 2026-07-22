@@ -19,7 +19,7 @@ PHPVM_CACHE="$PHPVM_DIR/cache"
 PHPVM_LOG="$PHPVM_DIR/build.log"
 PHPVM_UPDATE_URL="https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
 PHPVM_LAST_CHECK="$PHPVM_DIR/.last_update_check"
-PHPVM_CHECK_INTERVAL=86400  # 24 hours
+PHPVM_CHECK_INTERVAL=3600  # 1 hour
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 # printf (not echo -e): the message is passed through %s so backslashes in the
@@ -32,12 +32,12 @@ _step() { printf '  \033[36m> %s\033[0m\n'       "$*"; }
 _warn() { printf '  \033[33m[warn] %s\033[0m\n'  "$*"; }
 _dim()  { printf '  \033[90m%s\033[0m\n'         "$*"; }
 
-# ── Update checker (once per day, via version.txt) ───────────────────────────
+# ── Update checker (hourly, via version.txt) ─────────────────────────────────
 _phpvm_check_update() {
     # Skip in CI or if explicitly disabled
     [[ -n "${CI:-}" || -n "${PHPVM_NO_UPDATE_CHECK:-}" ]] && return
 
-    # Only check once per day
+    # Only check once per interval
     if [[ -f "$PHPVM_LAST_CHECK" ]]; then
         local last_ts now elapsed
         # GNU stat (-c) on Linux, BSD stat (-f) on macOS.

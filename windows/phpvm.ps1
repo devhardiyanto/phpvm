@@ -23,10 +23,10 @@ $PHPVM_BIN     = "$PHPVM_DIR\bin"
 $PHPVM_CACERT  = "$PHPVM_DIR\cacert.pem"
 $PHPVM_CACERT_URL = "https://curl.se/ca/cacert.pem"
 
-# -- Update checker (once per day, via version.txt) ---------------------------
+# -- Update checker (hourly, via version.txt) ---------------------------------
 $PHPVM_UPDATE_URL   = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
 $PHPVM_LAST_CHECK   = "$PHPVM_DIR\.last_update_check"
-$PHPVM_CHECK_INTERVAL = 86400  # 24 hours in seconds
+$PHPVM_CHECK_INTERVAL = 3600  # 1 hour in seconds
 
 function Check-PHPVMUpdate {
     if ($env:CI -or $env:PHPVM_NO_UPDATE_CHECK) { return }
