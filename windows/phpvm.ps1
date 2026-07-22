@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.11.0"
+$PHPVM_VERSION = "1.12.0"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -1139,7 +1139,7 @@ function Install-XDebug {
     $iniPath = $info.IniPath
     if ($iniPath -and (Test-Path $iniPath)) {
         $existing = Get-Content $iniPath -Raw
-        if ($existing -notmatch "zend_extension\s*=\s*xdebug") {
+        if ($existing -notmatch "(?m)^\s*zend_extension\s*=\s*xdebug") {
             $block = @"
 
 [xdebug]
@@ -1485,6 +1485,7 @@ function Show-Help {
     phpvm ini                      Open active php.ini in Notepad
     phpvm fix-ini                  Sync extension_dir & CA bundle in active php.ini
     phpvm cacert [status|update]   Manage the shared CA bundle (HTTPS/TLS)
+    phpvm doctor                   Diagnose PATH, ext_dir, CA bundle, VC++ runtime
 
   COMPOSER / WP-CLI
     phpvm composer                 Install Composer for active PHP version
@@ -1507,12 +1508,10 @@ function Show-Help {
 
   EXTENSION MANAGEMENT
     phpvm ext list                 Show all bundled extensions
-    phpvm ext loaded               Show loaded extensions
     phpvm ext enable  <name>       Enable a bundled extension
-    phpvm ext disable <name>       Disable an extension
     phpvm ext install <name>       Install from PECL / xdebug.org
-    phpvm ext info    <name>       Extension details
-    phpvm ext help                 Extension command reference
+    phpvm ext help                 Full extension reference (list, loaded,
+                                     disable, info, laravel, examples)
 
   EXAMPLES
     phpvm install 8.3.0
@@ -1592,6 +1591,92 @@ function Invoke-Cacert ([string]$sub) {
     }
 }
 
+
+# Read-only health check. Never mutates state - every finding points at the
+# command that fixes it. Exit-code-neutral: it's a report, not a gate.
+function Invoke-Doctor {
+    Write-Host ""
+    Write-Host "  phpvm doctor - environment health check" -ForegroundColor Cyan
+    Write-Host "  ---------------------------------------------------------" -ForegroundColor Cyan
+
+    function Doctor-Ok   ($m) { Write-Host "  [ok]   $m" -ForegroundColor Green;  $script:__docOk++ }
+    function Doctor-Warn ($m) { Write-Host "  [warn] $m" -ForegroundColor Yellow; $script:__docWarn++ }
+    $script:__docOk = 0; $script:__docWarn = 0
+
+    # 1. Active version + junction health.
+    $cur = Get-CurrentVersion
+    if ($cur) {
+        Doctor-Ok "Active PHP version: $cur"
+    } else {
+        Doctor-Warn "No active PHP version. Run: phpvm use <version>"
+    }
+
+    # 2. PATH shadowing: whichever php.exe resolves first is what runs. If it
+    #    isn't phpvm's, a XAMPP/Laragon/system PHP is winning.
+    $phpSources = @(Get-Command php.exe -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+    if ($phpSources.Count -eq 0) {
+        Doctor-Warn "No 'php' found on PATH. Open a new terminal after 'phpvm use', or check PATH."
+    } else {
+        $first = $phpSources[0]
+        if ($first -like "$CURRENT_LINK*" -or $first -like "$PHPVM_BIN*" -or $first -like "$VERSIONS_DIR*") {
+            Doctor-Ok "'php' resolves to phpvm: $first"
+        } else {
+            Doctor-Warn "'php' resolves to a non-phpvm install: $first"
+            Write-Dim "phpvm's bin must come first on PATH. Open a new terminal after 'phpvm use'."
+        }
+        $conflict = $phpSources | Where-Object { $_ -match '(?i)xampp|laragon|wamp' } | Select-Object -First 1
+        if ($conflict) {
+            Doctor-Warn "Another PHP toolchain on PATH: $conflict"
+            Write-Dim "XAMPP/Laragon/WAMP can shadow phpvm. Remove it from PATH or reorder."
+        }
+    }
+
+    # 3. ext_dir mismatch: php.ini's extension_dir must match the active build's
+    #    ext folder, or bundled extensions silently fail to load.
+    if ($cur) {
+        try {
+            $info = Get-PHPBuildInfo
+            if ($info.IniPath -and (Test-Path $info.IniPath)) {
+                $iniExtDir = Invoke-PHP $info.Exe "echo ini_get('extension_dir');"
+                if ($iniExtDir -and ($iniExtDir.TrimEnd('\') -ieq $info.ExtDir.TrimEnd('\'))) {
+                    Doctor-Ok "extension_dir matches active build."
+                } else {
+                    Doctor-Warn "extension_dir mismatch: '$iniExtDir' != '$($info.ExtDir)'"
+                    Write-Dim "Fix with: phpvm fix-ini"
+                }
+            } else {
+                Doctor-Warn "No php.ini loaded for the active version."
+                Write-Dim "Fix with: phpvm fix-ini"
+            }
+        } catch {
+            Doctor-Warn "Could not read active PHP build info: $_"
+        }
+    }
+
+    # 4. CA bundle (HTTPS/TLS for composer, ext downloads).
+    if (Test-Path $PHPVM_CACERT) {
+        $age = [int]((Get-Date) - (Get-Item $PHPVM_CACERT).LastWriteTime).TotalDays
+        Doctor-Ok "CA bundle present ($age day(s) old)."
+    } else {
+        Doctor-Warn "No CA bundle. Run: phpvm cacert update"
+    }
+
+    # 5. VC++ runtime: prebuilt PHP (vs16/vs17) needs the VC++ 2015-2022 redist.
+    if (Test-Path "$env:SystemRoot\System32\vcruntime140.dll") {
+        Doctor-Ok "VC++ runtime (vcruntime140.dll) present."
+    } else {
+        Doctor-Warn "VC++ runtime not found. PHP may fail to start."
+        Write-Dim "Install: https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    }
+
+    Write-Host ""
+    if ($script:__docWarn -eq 0) {
+        Write-Ok "All checks passed ($script:__docOk ok)."
+    } else {
+        Write-Warn "$script:__docWarn warning(s), $script:__docOk ok. See fixes above."
+    }
+    Write-Host ""
+}
 
 function Invoke-Upgrade {
     $scriptUrl  = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main/windows/phpvm.ps1"
@@ -1686,6 +1771,7 @@ if (-not $env:PHPVM_NO_ENTRY) {
         "ini"                           { Invoke-Ini }
         "fix-ini"                       { Invoke-FixIni }
         "cacert"                        { Invoke-Cacert  $SubOrVer }
+        "doctor"                        { Invoke-Doctor }
         "ext"                           { Invoke-Ext $SubOrVer $Arg2 $Arg3 }
         "auto"                          { Invoke-Auto }
         "hook"                          { Invoke-Hook $SubOrVer }
