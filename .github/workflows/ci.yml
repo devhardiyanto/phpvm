@@ -73,6 +73,26 @@ jobs:
       - name: Bats (offline)
         run: bats tests/linux/
 
+      # B12 slice: does a real build-from-source succeed on macOS ARM?
+      # Non-gating (continue-on-error above) — result feeds the macOS backlog.
+      - name: Install build dependencies (brew)
+        run: |
+          brew install autoconf bison re2c pkg-config openssl@3 libxml2 \
+            sqlite curl oniguruma libzip zlib readline libpng jpeg webp \
+            freetype gmp libsodium gettext
+
+      - name: Smoke install + use (build from source)
+        shell: bash
+        run: |
+          # Keg-only bison must shadow the ancient system bison for the build.
+          export PATH="$(brew --prefix bison)/bin:$PATH"
+          export PHPVM_NO_INIT=1
+          source linux/phpvm.sh
+          unset PHPVM_NO_INIT
+          phpvm install 8.3 --no-use
+          phpvm use 8.3
+          php --version
+
   version-consistency:
     name: Version consistency
     runs-on: ubuntu-latest
