@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # -- Constants -----------------------------------------------------------------
-$PHPVM_VERSION = "1.12.0"
+$PHPVM_VERSION = "1.12.1"
 $PHPVM_DIR     = if ($env:PHPVM_DIR) { $env:PHPVM_DIR } else { "$env:USERPROFILE\.phpvm" }
 $VERSIONS_DIR  = "$PHPVM_DIR\versions"
 $CURRENT_LINK  = "$PHPVM_DIR\current"
@@ -23,10 +23,10 @@ $PHPVM_BIN     = "$PHPVM_DIR\bin"
 $PHPVM_CACERT  = "$PHPVM_DIR\cacert.pem"
 $PHPVM_CACERT_URL = "https://curl.se/ca/cacert.pem"
 
-# -- Update checker (once per day, via version.txt) ---------------------------
+# -- Update checker (hourly, via version.txt) ---------------------------------
 $PHPVM_UPDATE_URL   = "https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
 $PHPVM_LAST_CHECK   = "$PHPVM_DIR\.last_update_check"
-$PHPVM_CHECK_INTERVAL = 86400  # 24 hours in seconds
+$PHPVM_CHECK_INTERVAL = 3600  # 1 hour in seconds
 
 function Check-PHPVMUpdate {
     if ($env:CI -or $env:PHPVM_NO_UPDATE_CHECK) { return }
@@ -1593,6 +1593,17 @@ function Invoke-Cacert ([string]$sub) {
 
 
 # Read-only health check. Never mutates state - every finding points at the
+# True when the ini's extension_dir points at the active version's ext folder.
+# `current` is a junction to versions\<cur>, so the versions\<cur>\ext and
+# current\ext spellings name the same directory - accept either rather than
+# string-comparing and false-flagging a valid setup.
+function Test-ExtDirMatch ([string]$iniExtDir, [string]$cur) {
+    if (-not $iniExtDir) { return $false }
+    $acceptable = @("$VERSIONS_DIR\$cur\ext", "$CURRENT_LINK\ext") |
+        ForEach-Object { $_.TrimEnd('\') }
+    return ($acceptable -icontains $iniExtDir.TrimEnd('\'))
+}
+
 # command that fixes it. Exit-code-neutral: it's a report, not a gate.
 function Invoke-Doctor {
     Write-Host ""
@@ -1638,7 +1649,7 @@ function Invoke-Doctor {
             $info = Get-PHPBuildInfo
             if ($info.IniPath -and (Test-Path $info.IniPath)) {
                 $iniExtDir = Invoke-PHP $info.Exe "echo ini_get('extension_dir');"
-                if ($iniExtDir -and ($iniExtDir.TrimEnd('\') -ieq $info.ExtDir.TrimEnd('\'))) {
+                if (Test-ExtDirMatch $iniExtDir $cur) {
                     Doctor-Ok "extension_dir matches active build."
                 } else {
                     Doctor-Warn "extension_dir mismatch: '$iniExtDir' != '$($info.ExtDir)'"
