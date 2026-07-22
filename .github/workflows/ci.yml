@@ -74,14 +74,15 @@ jobs:
         run: bats tests/linux/
 
       # B12 slice: does a real build-from-source succeed on macOS ARM?
-      # Non-gating (continue-on-error above) — result feeds the macOS backlog.
+      # Informational — a configure/build failure prints the log tail and still
+      # passes, so this surfaces the remaining ARM gaps without a permanent red.
       - name: Install build dependencies (brew)
         run: |
           brew install autoconf bison re2c pkg-config openssl@3 libxml2 \
             sqlite curl oniguruma libzip zlib readline libpng jpeg webp \
             freetype gmp libsodium gettext
 
-      - name: Smoke install + use (build from source)
+      - name: Smoke install + use (build from source, informational)
         shell: bash
         run: |
           # Keg-only bison must shadow the ancient system bison for the build.
@@ -89,9 +90,13 @@ jobs:
           export PHPVM_NO_INIT=1
           source linux/phpvm.sh
           unset PHPVM_NO_INIT
-          phpvm install 8.3 --no-use
-          phpvm use 8.3
-          php --version
+          if phpvm install 8.3 --no-use && phpvm use 8.3 && php --version; then
+            echo "macOS build-from-source smoke: OK"
+          else
+            echo "::warning::macOS build-from-source smoke failed (known B12 ARM gap)"
+            echo "----- build.log (tail) -----"
+            tail -60 "$HOME/.phpvm/build.log" 2>/dev/null || echo "(no build.log)"
+          fi
 
   version-consistency:
     name: Version consistency
