@@ -28,4 +28,22 @@ Describe 'Invoke-Doctor' {
 
         $out | Should -Match 'Active PHP version: 8\.3\.0'
     }
+
+    Context 'Test-ExtDirMatch (ext_dir junction equivalence)' {
+        It 'Accepts the version-specific ext path' {
+            Test-ExtDirMatch "$VERSIONS_DIR\8.5.6\ext" '8.5.6' | Should -BeTrue
+        }
+        It 'Accepts the current\ext junction spelling' {
+            Test-ExtDirMatch "$CURRENT_LINK\ext" '8.5.6' | Should -BeTrue
+        }
+        It 'Ignores a trailing backslash' {
+            Test-ExtDirMatch "$VERSIONS_DIR\8.5.6\ext\" '8.5.6' | Should -BeTrue
+        }
+        It 'Rejects an unrelated extension_dir' {
+            Test-ExtDirMatch 'C:\xampp\php\ext' '8.5.6' | Should -BeFalse
+        }
+        It 'Rejects an empty extension_dir' {
+            Test-ExtDirMatch '' '8.5.6' | Should -BeFalse
+        }
+    }
 }
