@@ -313,8 +313,15 @@ This is **not** a phpvm bug. The PHP extension is only half of the stack — at
 runtime it also needs Microsoft's ODBC Driver for SQL Server, installed
 system-wide (one-off, outside phpvm). phpvm prints this note after install.
 
-- Windows: [Download ODBC Driver 18](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server)
+- Windows: [Download the ODBC Driver](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server)
 - Linux/macOS: [Install the ODBC driver](https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server)
+
+**Driver 18 vs 17 gotcha:** the PHP extension works with either, but Driver 18
+changed the `Encrypt` default from `no` to **`yes`** — so a connection that
+worked before now fails TLS against a local/dev SQL Server with a self-signed
+certificate. Either add `Encrypt=yes;TrustServerCertificate=yes` (or
+`Encrypt=no`) to your connection string, or install Driver 17. Driver 18 also
+requires SQL Server 2012+; older servers (2008/R2) need Driver 17.
 
 If the PECL build itself fails, it's a toolchain/driver-header gap on your
 machine (`unixODBC-devel` / ODBC SDK), not something phpvm can bundle.
