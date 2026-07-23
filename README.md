@@ -307,6 +307,33 @@ terminal. Linux: make sure your `~/.bashrc` / `~/.zshrc` sources
 `~/.phpvm/phpvm.sh`. Note that auto-switch never installs missing versions —
 it only switches between installed ones.
 
+### `ext install sqlsrv` / `pdo_sqlsrv` fails or won't connect
+
+This is **not** a phpvm bug. The PHP extension is only half of the stack — at
+runtime it also needs Microsoft's ODBC Driver for SQL Server, installed
+system-wide (one-off, outside phpvm). phpvm prints this note after install.
+
+- Windows: [Download ODBC Driver 18](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server)
+- Linux/macOS: [Install the ODBC driver](https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server)
+
+If the PECL build itself fails, it's a toolchain/driver-header gap on your
+machine (`unixODBC-devel` / ODBC SDK), not something phpvm can bundle.
+
+---
+
+## Known limitations
+
+- **PECL extensions on Windows are not hash-verified.** phpvm enforces SHA-256
+  on the PHP core zip and the Xdebug DLL, but `windows.php.net` does not publish
+  checksums for its [PECL release archives](https://windows.php.net/downloads/pecl/releases/),
+  so there is nothing to verify against. Downloads still go over HTTPS. If your
+  threat model requires it, build the extension from source instead of pulling
+  the prebuilt DLL. (Linux/macOS build extensions via PECL from source, so this
+  gap is Windows-only.)
+- **macOS is experimental.** Building PHP from source relies on Homebrew deps
+  and is exercised only in CI (non-gating). FPM user/group defaults assume
+  Linux. See the Compatibility table.
+
 ---
 
 ## Compatibility
