@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.12.1"
+PHPVM_VERSION="1.12.2"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -484,6 +484,15 @@ phpvm_install() {
         gettext_opt="--with-gettext=$(brew --prefix gettext)"
     fi
 
+    # gmp is keg-only on Homebrew AND ships no pkg-config (.pc) file, so the
+    # PKG_CONFIG_PATH prepend below can't find it — configure needs the explicit
+    # prefix or it fails with "GNU MP Library version 4.2 or greater required".
+    # Linux resolves --with-gmp from the system libgmp-dev, so leave it bare.
+    local gmp_opt="--with-gmp"
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew &>/dev/null; then
+        gmp_opt="--with-gmp=$(brew --prefix gmp)"
+    fi
+
     local configure_opts=(
         "--prefix=$target"
         "--with-config-file-path=$target/etc"
@@ -513,7 +522,7 @@ phpvm_install() {
         "--with-webp"
         "--with-freetype"
         "$gettext_opt"
-        "--with-gmp"
+        "$gmp_opt"
         "--with-pgsql"
         "--with-pdo-pgsql"
         "--with-onig"
