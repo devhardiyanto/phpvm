@@ -278,6 +278,12 @@ EOF
     [[ "$output" != *"Did you mean"* ]]
 }
 
+@test "unknown: suggests doctor for a doctor typo" {
+    run phpvm doctro
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Did you mean 'doctor'?"* ]]
+}
+
 # ---------- partial version resolution ----------
 
 @test "resolve: full x.y.z passes through without network" {
