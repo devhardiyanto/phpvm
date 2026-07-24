@@ -1534,7 +1534,7 @@ _phpvm_levenshtein() {
 }
 
 # Canonical command list (includes aliases) for suggestions.
-_PHPVM_COMMANDS="install use list ls current uninstall remove which ini deps ext composer wp-cli fix-ini auto hook upgrade update version help"
+_PHPVM_COMMANDS="install use list ls current uninstall remove which doctor ini deps ext composer wp-cli fix-ini auto hook upgrade update version help"
 
 # Unknown command: suggest the nearest match instead of dumping the full help.
 _phpvm_unknown() {

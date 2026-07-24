@@ -164,6 +164,11 @@ Describe 'Invoke-Unknown' {
         $out | Should -Match "is not a phpvm command"
         $out | Should -Not -Match "Did you mean"
     }
+
+    It 'Suggests doctor for a doctor typo' {
+        $out = Invoke-Unknown 'doctro' 6>&1 | Out-String
+        $out | Should -Match "Did you mean 'doctor'\?"
+    }
 }
 
 Describe 'Get-PHPZipHash' {

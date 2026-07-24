@@ -1165,9 +1165,7 @@ function Ext-Info ([string]$extName) {
 if (extension_loaded('$extName')) {
     `$r = new ReflectionExtension('$extName');
     echo 'Name    : ' . `$r->getName() . PHP_EOL;
-    `$version = `$r->getVersion();
-    if (`$version -eq `$null) { `$version = 'n/a'; }
-    echo 'Version : ' . `$version . PHP_EOL;
+    echo 'Version : ' . (`$r->getVersion() ?? 'n/a') . PHP_EOL;
     `$classes = `$r->getClassNames();
     if (`$classes) echo 'Classes : ' . implode(', ', `$classes) . PHP_EOL;
 } else {
@@ -1592,7 +1590,6 @@ function Invoke-Cacert ([string]$sub) {
 }
 
 
-# Read-only health check. Never mutates state - every finding points at the
 # True when the ini's extension_dir points at the active version's ext folder.
 # `current` is a junction to versions\<cur>, so the versions\<cur>\ext and
 # current\ext spellings name the same directory - accept either rather than
@@ -1604,6 +1601,7 @@ function Test-ExtDirMatch ([string]$iniExtDir, [string]$cur) {
     return ($acceptable -icontains $iniExtDir.TrimEnd('\'))
 }
 
+# Read-only health check. Never mutates state - every finding points at the
 # command that fixes it. Exit-code-neutral: it's a report, not a gate.
 function Invoke-Doctor {
     Write-Host ""
@@ -1751,7 +1749,7 @@ function Get-Levenshtein ([string]$a, [string]$b) {
 # Unknown command: suggest the nearest match instead of dumping the full help.
 function Invoke-Unknown ([string]$cmd) {
     $cmds = @("install","use","list","ls","current","uninstall","remove",
-              "which","ini","fix-ini","cacert","ext","composer","wp-cli","auto","hook",
+              "which","ini","fix-ini","cacert","doctor","ext","composer","wp-cli","auto","hook",
               "upgrade","update","version","help")
     $best = ""; $bestd = 99
     foreach ($c in $cmds) {
