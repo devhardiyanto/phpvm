@@ -493,6 +493,15 @@ phpvm_install() {
         gmp_opt="--with-gmp=$(brew --prefix gmp)"
     fi
 
+    # libiconv is keg-only on Homebrew and ships no pkg-config file, so the
+    # PKG_CONFIG_PATH prepend below can't find it — configure needs the explicit
+    # prefix or iconv support fails to detect. Linux resolves iconv from glibc,
+    # so leave it bare.
+    local iconv_opt="--with-iconv"
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew &>/dev/null; then
+        iconv_opt="--with-iconv=$(brew --prefix libiconv)"
+    fi
+
     local configure_opts=(
         "--prefix=$target"
         "--with-config-file-path=$target/etc"
@@ -523,6 +532,7 @@ phpvm_install() {
         "--with-freetype"
         "$gettext_opt"
         "$gmp_opt"
+        "$iconv_opt"
         "--with-pgsql"
         "--with-pdo-pgsql"
         "--with-onig"
