@@ -1,4 +1,12 @@
 # ==============================================================================
+#  GENERATED FILE - DO NOT EDIT
+#  Built from windows/src/*.ps1 (concatenated in filename order).
+#  Edit a module there, then run:  pwsh ./build.ps1
+#  CI fails the drift check if this file and the modules disagree.
+# ==============================================================================
+
+# --- src/00-header.ps1 -------------------------------------------------------------
+# ==============================================================================
 #  phpvm.ps1 - PHP Version Manager for Windows
 #  Compatible with: CMD (via phpvm.cmd shim) and PowerShell
 #  Repo: https://github.com/devhardiyanto/phpvm
@@ -28,6 +36,7 @@ $PHPVM_UPDATE_URL   = "https://raw.githubusercontent.com/devhardiyanto/phpvm/mai
 $PHPVM_LAST_CHECK   = "$PHPVM_DIR\.last_update_check"
 $PHPVM_CHECK_INTERVAL = 3600  # 1 hour in seconds
 
+# --- src/10-output.ps1 -------------------------------------------------------------
 function Check-PHPVMUpdate {
     if ($env:CI -or $env:PHPVM_NO_UPDATE_CHECK) { return }
 
@@ -103,6 +112,7 @@ function Initialize-PHPVM {
     }
 }
 
+# --- src/20-phpinfo.ps1 ------------------------------------------------------------
 # -- PHP build metadata --------------------------------------------------------
 # Some Windows PHP builds leak warnings into stdout; strip them.
 function Invoke-PHP ([string]$exe, [string]$code) {
@@ -251,6 +261,7 @@ function Remove-Junction ([string]$path) {
     }
 }
 
+# --- src/30-net.ps1 ----------------------------------------------------------------
 # -- Download helper -----------------------------------------------------------
 # Progress is only worth drawing for the PHP zips (tens of MB); the Xdebug DLL
 # and ext zips are small enough that a bar would just flicker.
@@ -348,6 +359,47 @@ function Unblock-PHPVMPath ([string]$path) {
     }
 }
 
+# Look up the expected SHA-256 for a PHP zip on windows.php.net.
+# Returns lowercase hex digest, or $null if no checksum is published.
+function Get-PHPZipHash ([string]$zipUrl) {
+    $sumUrl  = ($zipUrl -replace '/[^/]+\.zip$', '/') + 'sha256sum.txt'
+    $zipName = Split-Path $zipUrl -Leaf
+    try { $sums = Get-WebString $sumUrl 10 } catch { return $null }
+
+    foreach ($line in $sums -split "`r?`n") {
+        if ($line -match "^([0-9a-fA-F]{64})\s+\*?$([regex]::Escape($zipName))\s*$") {
+            return $Matches[1].ToLower()
+        }
+    }
+    return $null
+}
+
+# Fetch a sibling .sha256 file (xdebug.org convention) and return its digest.
+function Get-XDebugHash ([string]$dllUrl) {
+    try { $content = Get-WebString "$dllUrl.sha256" 10 } catch { return $null }
+    if ($content -match '([0-9a-fA-F]{64})') { return $Matches[1].ToLower() }
+    return $null
+}
+
+function Test-URLExists ([string]$url) {
+    $ProgressPreference = "SilentlyContinue"
+    # HEAD via Invoke-WebRequest follows 30x redirects (windows.php.net -> downloads.php.net).
+    try {
+        $r = Invoke-WebRequest -Uri $url -Method Head -MaximumRedirection 5 `
+                               -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)
+    } catch {
+        # Some mirrors reject HEAD (405) -- fall back to a 1-byte ranged GET.
+        try {
+            $r = Invoke-WebRequest -Uri $url -Method Get -MaximumRedirection 5 `
+                                   -UseBasicParsing -TimeoutSec 5 `
+                                   -Headers @{ Range = "bytes=0-0" } -ErrorAction Stop
+            return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)
+        } catch { return $false }
+    }
+}
+
+# --- src/35-cacert.ps1 -------------------------------------------------------------
 # -- CA bundle (curl.cainfo / openssl.cafile) ----------------------------------
 # Windows PHP builds ship no CA bundle, so every HTTPS request from PHP fails
 # with cURL error 60 until one is configured. One shared bundle in $PHPVM_DIR
@@ -401,46 +453,7 @@ function Update-IniCACert ([string]$iniPath, [string]$bundlePath) {
     return $true
 }
 
-# Look up the expected SHA-256 for a PHP zip on windows.php.net.
-# Returns lowercase hex digest, or $null if no checksum is published.
-function Get-PHPZipHash ([string]$zipUrl) {
-    $sumUrl  = ($zipUrl -replace '/[^/]+\.zip$', '/') + 'sha256sum.txt'
-    $zipName = Split-Path $zipUrl -Leaf
-    try { $sums = Get-WebString $sumUrl 10 } catch { return $null }
-
-    foreach ($line in $sums -split "`r?`n") {
-        if ($line -match "^([0-9a-fA-F]{64})\s+\*?$([regex]::Escape($zipName))\s*$") {
-            return $Matches[1].ToLower()
-        }
-    }
-    return $null
-}
-
-# Fetch a sibling .sha256 file (xdebug.org convention) and return its digest.
-function Get-XDebugHash ([string]$dllUrl) {
-    try { $content = Get-WebString "$dllUrl.sha256" 10 } catch { return $null }
-    if ($content -match '([0-9a-fA-F]{64})') { return $Matches[1].ToLower() }
-    return $null
-}
-
-function Test-URLExists ([string]$url) {
-    $ProgressPreference = "SilentlyContinue"
-    # HEAD via Invoke-WebRequest follows 30x redirects (windows.php.net -> downloads.php.net).
-    try {
-        $r = Invoke-WebRequest -Uri $url -Method Head -MaximumRedirection 5 `
-                               -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-        return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)
-    } catch {
-        # Some mirrors reject HEAD (405) -- fall back to a 1-byte ranged GET.
-        try {
-            $r = Invoke-WebRequest -Uri $url -Method Get -MaximumRedirection 5 `
-                                   -UseBasicParsing -TimeoutSec 5 `
-                                   -Headers @{ Range = "bytes=0-0" } -ErrorAction Stop
-            return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)
-        } catch { return $false }
-    }
-}
-
+# --- src/40-install.ps1 ------------------------------------------------------------
 # ==============================================================================
 #  CORE COMMANDS
 # ==============================================================================
@@ -601,6 +614,7 @@ function Show-OlderPatchHint ([string]$ver) {
     Write-Dim "Remove it with: phpvm uninstall $($older[-1])"
 }
 
+# --- src/45-version.ps1 ------------------------------------------------------------
 function Invoke-Use ([string]$ver) {
     if (-not $ver) { Write-Err "Usage: phpvm use <version>"; return }
 
@@ -704,6 +718,7 @@ function Invoke-Ini {
     }
 }
 
+# --- src/50-auto.ps1 ---------------------------------------------------------------
 # ==============================================================================
 #  AUTO-SWITCH (.phpvmrc)
 # ==============================================================================
@@ -798,6 +813,7 @@ function Invoke-Auto ([switch]$Silent) {
     }
 }
 
+# --- src/55-hook.ps1 ---------------------------------------------------------------
 # Manage the $PROFILE snippet that runs `phpvm auto -Silent` on each prompt.
 $script:PHPVM_HOOK_MARKER = '# phpvm-auto-hook (managed by `phpvm hook`)'
 
@@ -880,6 +896,7 @@ function Invoke-Hook ([string]$sub) {
     }
 }
 
+# --- src/60-ext.ps1 ----------------------------------------------------------------
 # ==============================================================================
 #  EXT COMMANDS
 # ==============================================================================
@@ -1335,6 +1352,8 @@ function Show-ExtHelp {
 "@ -ForegroundColor Cyan
 }
 
+# --- src/70-composer.ps1 -----------------------------------------------------------
+
 function Invoke-Composer {
     $info = Get-PHPBuildInfo
     $loaded = (& $info.Exe -m 2>$null) | ForEach-Object { $_.Trim().ToLower() }
@@ -1412,6 +1431,7 @@ php "$composerPhar" %*
     Write-Dim "Composer follows your active PHP version - no need to re-run after 'phpvm use'."
 }
 
+# --- src/72-wpcli.ps1 --------------------------------------------------------------
 function Invoke-WpCli {
     $info = Get-PHPBuildInfo
 
@@ -1467,66 +1487,7 @@ php "$wpPhar" %*
     Write-Dim "WP-CLI follows your active PHP version - no need to re-run after 'phpvm use'."
 }
 
-function Show-Help {
-    Write-Host @"
-
-  phpvm $PHPVM_VERSION - PHP Version Manager for Windows
-  ---------------------------------------------------------
-
-  VERSION MANAGEMENT
-    phpvm install   <version>      Download & install a PHP version
-                                     --no-use     install without switching to it
-                                     --no-cacert  skip CA bundle configuration
-    phpvm use       <version>      Switch the active PHP version
-    phpvm list                     List installed versions
-    phpvm current                  Show active version info
-    phpvm uninstall <version>      Remove a PHP version
-    phpvm which                    Path to active php.exe
-    phpvm ini                      Open active php.ini in Notepad
-    phpvm fix-ini                  Sync extension_dir & CA bundle in active php.ini
-    phpvm cacert [status|update]   Manage the shared CA bundle (HTTPS/TLS)
-    phpvm doctor                   Diagnose PATH, ext_dir, CA bundle, VC++ runtime
-
-  COMPOSER / WP-CLI
-    phpvm composer                 Install Composer for active PHP version
-    phpvm wp-cli                   Install WP-CLI (global 'wp' command)
-
-  AUTO-SWITCH (.phpvmrc)
-    phpvm auto                     Switch to the version named in .phpvmrc
-    phpvm hook enable              Enable auto-switching (PowerShell prompt hook)
-    phpvm hook disable             Disable the hook
-    phpvm hook status              Check whether the hook is enabled
-
-  SELF UPDATE
-    phpvm upgrade                  Upgrade phpvm to latest version
-    phpvm version                  Show current phpvm version
-
-  LARAVEL QUICK SETUP
-    phpvm ext laravel              Enable all Laravel extensions (full)
-    phpvm ext laravel minimal      Required extensions only
-    phpvm ext laravel full         Required + recommended + Redis
-
-  EXTENSION MANAGEMENT
-    phpvm ext list                 Show all bundled extensions
-    phpvm ext enable  <name>       Enable a bundled extension
-    phpvm ext install <name>       Install from PECL / xdebug.org
-    phpvm ext help                 Full extension reference (list, loaded,
-                                     disable, info, laravel, examples)
-
-  EXAMPLES
-    phpvm install 8.3.0
-    phpvm install 8.1.29
-    phpvm use 8.3.0
-    phpvm ext enable mbstring
-    phpvm ext enable pdo_mysql
-    phpvm ext install redis
-    phpvm ext install xdebug
-
-  Home: $PHPVM_DIR
-
-"@ -ForegroundColor Cyan
-}
-
+# --- src/80-maint.ps1 --------------------------------------------------------------
 function Invoke-FixIni {
     $cur = Get-CurrentVersion
     if (-not $cur) { Write-Err "No active PHP version. Run: phpvm use <version>"; return }
@@ -1724,6 +1685,66 @@ function Invoke-Upgrade {
     }
 }
 
+# --- src/90-help.ps1 ---------------------------------------------------------------
+function Show-Help {
+    Write-Host @"
+
+  phpvm $PHPVM_VERSION - PHP Version Manager for Windows
+  ---------------------------------------------------------
+
+  VERSION MANAGEMENT
+    phpvm install   <version>      Download & install a PHP version
+                                     --no-use     install without switching to it
+                                     --no-cacert  skip CA bundle configuration
+    phpvm use       <version>      Switch the active PHP version
+    phpvm list                     List installed versions
+    phpvm current                  Show active version info
+    phpvm uninstall <version>      Remove a PHP version
+    phpvm which                    Path to active php.exe
+    phpvm ini                      Open active php.ini in Notepad
+    phpvm fix-ini                  Sync extension_dir & CA bundle in active php.ini
+    phpvm cacert [status|update]   Manage the shared CA bundle (HTTPS/TLS)
+    phpvm doctor                   Diagnose PATH, ext_dir, CA bundle, VC++ runtime
+
+  COMPOSER / WP-CLI
+    phpvm composer                 Install Composer for active PHP version
+    phpvm wp-cli                   Install WP-CLI (global 'wp' command)
+
+  AUTO-SWITCH (.phpvmrc)
+    phpvm auto                     Switch to the version named in .phpvmrc
+    phpvm hook enable              Enable auto-switching (PowerShell prompt hook)
+    phpvm hook disable             Disable the hook
+    phpvm hook status              Check whether the hook is enabled
+
+  SELF UPDATE
+    phpvm upgrade                  Upgrade phpvm to latest version
+    phpvm version                  Show current phpvm version
+
+  LARAVEL QUICK SETUP
+    phpvm ext laravel              Enable all Laravel extensions (full)
+    phpvm ext laravel minimal      Required extensions only
+    phpvm ext laravel full         Required + recommended + Redis
+
+  EXTENSION MANAGEMENT
+    phpvm ext list                 Show all bundled extensions
+    phpvm ext enable  <name>       Enable a bundled extension
+    phpvm ext install <name>       Install from PECL / xdebug.org
+    phpvm ext help                 Full extension reference (list, loaded,
+                                     disable, info, laravel, examples)
+
+  EXAMPLES
+    phpvm install 8.3.0
+    phpvm install 8.1.29
+    phpvm use 8.3.0
+    phpvm ext enable mbstring
+    phpvm ext enable pdo_mysql
+    phpvm ext install redis
+    phpvm ext install xdebug
+
+  Home: $PHPVM_DIR
+
+"@ -ForegroundColor Cyan
+}
 
 # -- Did-you-mean (unknown command handling) -----------------------------------
 # Iterative Levenshtein distance (two-row, O(n) memory).
@@ -1763,6 +1784,7 @@ function Invoke-Unknown ([string]$cmd) {
     Write-Dim "Run 'phpvm help' to see all commands."
 }
 
+# --- src/99-entry.ps1 --------------------------------------------------------------
 # Tests dot-source this file and set $env:PHPVM_NO_ENTRY=1 to skip the entry point.
 if (-not $env:PHPVM_NO_ENTRY) {
     Initialize-PHPVM

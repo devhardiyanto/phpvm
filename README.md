@@ -375,6 +375,37 @@ TS/NTS + toolchain and downloads matching extension DLLs.
 
 ---
 
+## Development
+
+`windows/phpvm.ps1` is **generated** — do not edit it directly. The Windows
+sources live in `windows/src/*.ps1`, one file per domain, and are concatenated
+back into the single shipped script:
+
+```powershell
+pwsh ./build.ps1          # rebuild windows/phpvm.ps1 from windows/src/
+pwsh ./build.ps1 -Check   # fail if the two have drifted (what CI gates on)
+```
+
+The numeric filename prefixes set the concat order and are load-bearing:
+`00-header.ps1` opens with `param()`, which PowerShell requires to be the first
+statement, and `99-entry.ps1` closes with the command dispatch, which has to see
+every function already defined. Distribution is unaffected — the installer and
+`phpvm upgrade` still fetch one file.
+
+`linux/phpvm.sh` is hand-written and not part of the build.
+
+Tests:
+
+```powershell
+Invoke-Pester -Configuration (New-PesterConfiguration -Hashtable (Import-PowerShellDataFile ./tests/PesterConfiguration.psd1))
+```
+
+```bash
+bats tests/linux/
+```
+
+---
+
 ## License
 
 MIT
