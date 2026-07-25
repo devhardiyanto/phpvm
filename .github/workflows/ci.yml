@@ -23,10 +23,21 @@ jobs:
           Install-Module -Name Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
           Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force
 
+      - name: Verify phpvm.ps1 matches windows/src (drift check)
+        shell: pwsh
+        run: ./build.ps1 -Check
+
       - name: PSScriptAnalyzer
         shell: pwsh
         run: |
-          $results = Invoke-ScriptAnalyzer -Path ./windows -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          # Deliberately not -Recurse: windows/src/*.ps1 are fragments, not
+          # standalone scripts, so linting them alone flags every constant as
+          # unused and every param() as unreferenced. The drift check above
+          # guarantees the generated file is what those modules say.
+          $files = @(Get-ChildItem ./windows -Filter *.ps1) + @(Get-Item ./build.ps1)
+          $results = $files | ForEach-Object {
+            Invoke-ScriptAnalyzer -Path $_.FullName -Settings ./PSScriptAnalyzerSettings.psd1
+          }
           if ($results) {
             $results | Format-Table -AutoSize
             throw "PSScriptAnalyzer found $($results.Count) issue(s)."
