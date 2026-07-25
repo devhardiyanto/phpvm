@@ -592,7 +592,9 @@ function Get-OlderPatch ([string]$ver) {
 }
 
 function Show-OlderPatchHint ([string]$ver) {
-    $older = Get-OlderPatch $ver
+    # The pipeline unrolls a one-element return, and StrictMode has no .Count
+    # (nor a working [-1]) on the bare string that leaves behind.
+    $older = @(Get-OlderPatch $ver)
     if ($older.Count -eq 0) { return }
 
     Write-Dim "Older patch of $(($ver -split '\.')[0..1] -join '.') still installed: $($older -join ', ')"
