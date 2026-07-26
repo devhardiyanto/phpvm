@@ -625,7 +625,9 @@ _phpvm_older_patch_hint() {
     [[ -z "$older" ]] && return 0
 
     newest=$(echo "$older" | tail -1)
-    _dim "Older patch of ${ver%.*} still installed: $(echo "$older" | paste -sd ', ' -)"
+    # paste -d takes a *list* of delimiters and cycles through it, so ', ' would
+    # join as "a,b c". Join on a comma, then space it out.
+    _dim "Older patch of ${ver%.*} still installed: $(echo "$older" | paste -sd, - | sed 's/,/, /g')"
     _dim "Remove it with: phpvm uninstall $newest"
 }
 

@@ -428,6 +428,15 @@ EOF
     [[ "$output" == *"phpvm uninstall 8.5.6"* ]]
 }
 
+@test "older_patch_hint: separates several patches with a comma and a space" {
+    # paste -d cycles its delimiter list, so ', ' used to join as "a,b c".
+    mkdir -p "$PHPVM_VERSIONS"/{8.5.1,8.5.2,8.5.6,8.5.8}
+    run _phpvm_older_patch_hint 8.5.8
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"8.5.1, 8.5.2, 8.5.6"* ]]
+    [[ "$output" != *"8.5.2 8.5.6"* ]]
+}
+
 # ---------- phpvm_doctor ----------
 
 @test "doctor: warns when no active version" {
