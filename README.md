@@ -402,7 +402,13 @@ Invoke-Pester -Configuration (New-PesterConfiguration -Hashtable (Import-PowerSh
 
 ```bash
 bats tests/linux/
+zsh tests/linux/zsh-smoke.zsh   # bats runs under bash; this covers zsh
 ```
+
+`phpvm.sh` targets both bash and zsh, and the two differ in ways that stay
+invisible until a zsh user hits them — zsh arrays are 1-based, zsh does not
+word-split unquoted parameters, and `${var:i}` is parsed as a history modifier
+rather than a substring offset. Run the zsh smoke before touching `phpvm.sh`.
 
 ---
 

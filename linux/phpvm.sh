@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.13.0"
+PHPVM_VERSION="1.13.1"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -234,6 +234,51 @@ _phpvm_detect_os() {
     fi
 }
 
+# Version of the OpenSSL that ./configure will actually resolve. pkg-config is
+# what configure consults, so ask it first; the `openssl` CLI is a fallback and
+# can disagree with the installed headers. Echoes "3.0.2"; non-zero if unknown.
+_phpvm_openssl_version() {
+    local v=""
+    command -v pkg-config &>/dev/null && v=$(pkg-config --modversion openssl 2>/dev/null)
+    [[ -z "$v" ]] && command -v openssl &>/dev/null && v=$(openssl version 2>/dev/null | awk '{print $2}')
+    # Strip a letter suffix: OpenSSL 1.1.1w -> 1.1.1
+    v="${v%%[a-zA-Z]*}"
+    [[ -n "$v" ]] || return 1
+    echo "$v"
+}
+
+# PHP's ext/openssl references RSA_SSLV23_PADDING, which OpenSSL removed in
+# 3.0. php-src only stopped using it in 8.1, so anything older dies partway
+# through `make` with a wall of C errors. That is knowable up front, so refuse
+# before spending ten minutes compiling.
+#   https://github.com/php/php-src/issues/9503
+# Escape hatch: PHPVM_SKIP_OPENSSL_CHECK=1 for setups where pkg-config resolves
+# an OpenSSL 1.1 that this probe can't see.
+_phpvm_check_openssl_compat() {
+    local ver="$1"
+    [[ -n "${PHPVM_SKIP_OPENSSL_CHECK:-}" ]] && return 0
+
+    local major="${ver%%.*}" minor
+    minor=$(echo "$ver" | cut -d. -f2)
+    # PHP 8.1+ builds fine against OpenSSL 3.
+    (( major > 8 )) && return 0
+    (( major == 8 && minor >= 1 )) && return 0
+
+    local ssl
+    ssl=$(_phpvm_openssl_version) || return 0   # can't tell -> don't block
+    [[ "${ssl%%.*}" -lt 3 ]] && return 0
+
+    _err "PHP $ver cannot be built against OpenSSL $ssl."
+    _dim "OpenSSL 3.0 removed RSA_SSLV23_PADDING; PHP's openssl extension only"
+    _dim "stopped using it in 8.1, so the build would fail in ext/openssl."
+    echo ""
+    _dim "Options:"
+    _dim "  - Install a supported line:   phpvm install 8.1   (or newer)"
+    _dim "  - Keep OpenSSL 1.1 as what pkg-config resolves, then re-run with:"
+    _dim "      PHPVM_SKIP_OPENSSL_CHECK=1 phpvm install $ver"
+    return 1
+}
+
 # ── Check build dependencies ──────────────────────────────────────────────────
 _phpvm_check_deps() {
     local missing=()
@@ -358,6 +403,22 @@ _phpvm_run_logged() {
     return $rc
 }
 
+# A failed build leaves thousands of lines of compiler noise in $PHPVM_LOG, and
+# the line that explains it is buried near the middle — "See log" alone makes
+# the user page through it. Pull out the first hard error instead.
+_phpvm_show_build_error() {
+    [[ -f "$PHPVM_LOG" ]] || return 0
+
+    local first
+    # configure's own failure is the more useful line when both are present.
+    first=$(grep -m1 -E '^configure: error:' "$PHPVM_LOG" 2>/dev/null)
+    [[ -z "$first" ]] && first=$(grep -m1 -E '(^|[[:space:]])(fatal )?error:' "$PHPVM_LOG" 2>/dev/null)
+    [[ -z "$first" ]] && return 0
+
+    _err "First error in the log:"
+    _dim "  ${first}"
+}
+
 # Resolve a partial version to the highest published patch on php.net.
 #   "8"   -> latest 8.x   (e.g. 8.5.7)
 #   "8.3" -> latest 8.3.x (e.g. 8.3.31)
@@ -435,6 +496,7 @@ phpvm_install() {
 
     # Check deps before attempting download
     _phpvm_check_deps || return 1
+    _phpvm_check_openssl_compat "$ver" || return 1
 
     # Download source
     local tarball="php-$ver.tar.gz"
@@ -572,6 +634,7 @@ phpvm_install() {
         _phpvm_run_logged "Installing" make install \
             || { _err "Install failed. See log: $PHPVM_LOG"; exit 1; }
     ) || {
+        _phpvm_show_build_error
         rm -rf "$target"
         return 1
     }
@@ -625,7 +688,9 @@ _phpvm_older_patch_hint() {
     [[ -z "$older" ]] && return 0
 
     newest=$(echo "$older" | tail -1)
-    _dim "Older patch of ${ver%.*} still installed: $(echo "$older" | paste -sd ', ' -)"
+    # paste -d takes a *list* of delimiters and cycles through it, so ', ' would
+    # join as "a,b c". Join on a comma, then space it out.
+    _dim "Older patch of ${ver%.*} still installed: $(echo "$older" | paste -sd, - | sed 's/,/, /g')"
     _dim "Remove it with: phpvm uninstall $newest"
 }
 
@@ -1524,33 +1589,43 @@ _phpvm_levenshtein() {
     (( la == 0 )) && { echo "$lb"; return; }
     (( lb == 0 )) && { echo "$la"; return; }
     local i j cost prev cur del ins sub min
+    # Indices are shifted by one so the array starts at 1: zsh arrays are
+    # 1-based and reject row[0] outright ("assignment to invalid subscript
+    # range"), while bash simply leaves index 0 unused.
     local -a row
-    for (( j = 0; j <= lb; j++ )); do row[j]=$j; done
+    for (( j = 0; j <= lb; j++ )); do row[j+1]=$j; done
     for (( i = 1; i <= la; i++ )); do
-        prev=${row[0]}
-        row[0]=$i
+        prev=${row[1]}
+        row[1]=$i
         for (( j = 1; j <= lb; j++ )); do
-            cur=${row[j]}
-            if [[ "${a:i-1:1}" == "${b:j-1:1}" ]]; then cost=0; else cost=1; fi
-            del=$(( row[j] + 1 )); ins=$(( row[j-1] + 1 )); sub=$(( prev + cost ))
+            cur=${row[j+1]}
+            # ${a:i-1:1} makes zsh read ":i" as a history modifier
+            # ("unrecognized modifier"). Spell the offset arithmetic out.
+            if [[ "${a:$((i-1)):1}" == "${b:$((j-1)):1}" ]]; then cost=0; else cost=1; fi
+            del=$(( row[j+1] + 1 )); ins=$(( row[j] + 1 )); sub=$(( prev + cost ))
             min=$del
             (( ins < min )) && min=$ins
             (( sub < min )) && min=$sub
-            row[j]=$min
+            row[j+1]=$min
             prev=$cur
         done
     done
-    echo "${row[lb]}"
+    echo "${row[lb+1]}"
 }
 
 # Canonical command list (includes aliases) for suggestions.
-_PHPVM_COMMANDS="install use list ls current uninstall remove which doctor ini deps ext composer wp-cli fix-ini auto hook upgrade update version help"
+# An array, not a space-separated string: zsh does not word-split unquoted
+# parameters, so `for c in $_PHPVM_COMMANDS` handed the whole list over as a
+# single candidate and every typo was answered with the entire list.
+_PHPVM_COMMANDS=(install use list ls current uninstall remove which doctor ini
+                 deps ext composer wp-cli fix-ini auto hook upgrade update
+                 version help)
 
 # Unknown command: suggest the nearest match instead of dumping the full help.
 _phpvm_unknown() {
     local cmd="$1"
     local best="" bestd=99 c d
-    for c in $_PHPVM_COMMANDS; do
+    for c in "${_PHPVM_COMMANDS[@]}"; do
         d=$(_phpvm_levenshtein "$cmd" "$c")
         (( d < bestd )) && { bestd=$d; best=$c; }
     done
