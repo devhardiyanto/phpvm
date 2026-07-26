@@ -1589,33 +1589,43 @@ _phpvm_levenshtein() {
     (( la == 0 )) && { echo "$lb"; return; }
     (( lb == 0 )) && { echo "$la"; return; }
     local i j cost prev cur del ins sub min
+    # Indices are shifted by one so the array starts at 1: zsh arrays are
+    # 1-based and reject row[0] outright ("assignment to invalid subscript
+    # range"), while bash simply leaves index 0 unused.
     local -a row
-    for (( j = 0; j <= lb; j++ )); do row[j]=$j; done
+    for (( j = 0; j <= lb; j++ )); do row[j+1]=$j; done
     for (( i = 1; i <= la; i++ )); do
-        prev=${row[0]}
-        row[0]=$i
+        prev=${row[1]}
+        row[1]=$i
         for (( j = 1; j <= lb; j++ )); do
-            cur=${row[j]}
-            if [[ "${a:i-1:1}" == "${b:j-1:1}" ]]; then cost=0; else cost=1; fi
-            del=$(( row[j] + 1 )); ins=$(( row[j-1] + 1 )); sub=$(( prev + cost ))
+            cur=${row[j+1]}
+            # ${a:i-1:1} makes zsh read ":i" as a history modifier
+            # ("unrecognized modifier"). Spell the offset arithmetic out.
+            if [[ "${a:$((i-1)):1}" == "${b:$((j-1)):1}" ]]; then cost=0; else cost=1; fi
+            del=$(( row[j+1] + 1 )); ins=$(( row[j] + 1 )); sub=$(( prev + cost ))
             min=$del
             (( ins < min )) && min=$ins
             (( sub < min )) && min=$sub
-            row[j]=$min
+            row[j+1]=$min
             prev=$cur
         done
     done
-    echo "${row[lb]}"
+    echo "${row[lb+1]}"
 }
 
 # Canonical command list (includes aliases) for suggestions.
-_PHPVM_COMMANDS="install use list ls current uninstall remove which doctor ini deps ext composer wp-cli fix-ini auto hook upgrade update version help"
+# An array, not a space-separated string: zsh does not word-split unquoted
+# parameters, so `for c in $_PHPVM_COMMANDS` handed the whole list over as a
+# single candidate and every typo was answered with the entire list.
+_PHPVM_COMMANDS=(install use list ls current uninstall remove which doctor ini
+                 deps ext composer wp-cli fix-ini auto hook upgrade update
+                 version help)
 
 # Unknown command: suggest the nearest match instead of dumping the full help.
 _phpvm_unknown() {
     local cmd="$1"
     local best="" bestd=99 c d
-    for c in $_PHPVM_COMMANDS; do
+    for c in "${_PHPVM_COMMANDS[@]}"; do
         d=$(_phpvm_levenshtein "$cmd" "$c")
         (( d < bestd )) && { bestd=$d; best=$c; }
     done
