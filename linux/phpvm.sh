@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.13.1"
+PHPVM_VERSION="1.13.2"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -238,9 +238,17 @@ _phpvm_detect_os() {
 # what configure consults, so ask it first; the `openssl` CLI is a fallback and
 # can disagree with the installed headers. Echoes "3.0.2"; non-zero if unknown.
 _phpvm_openssl_version() {
+    # LibreSSL and BoringSSL answer `openssl version` and ship an openssl.pc of
+    # their own, but their 3.x still defines RSA_SSLV23_PADDING — the premise of
+    # the guard below. Their numbering says nothing about it, so report the host
+    # as unknown rather than block a build that would have succeeded.
+    local banner=""
+    command -v openssl &>/dev/null && banner=$(openssl version 2>/dev/null)
+    [[ -n "$banner" && "$banner" != OpenSSL* ]] && return 1
+
     local v=""
     command -v pkg-config &>/dev/null && v=$(pkg-config --modversion openssl 2>/dev/null)
-    [[ -z "$v" ]] && command -v openssl &>/dev/null && v=$(openssl version 2>/dev/null | awk '{print $2}')
+    [[ -z "$v" && -n "$banner" ]] && v=$(echo "$banner" | awk '{print $2}')
     # Strip a letter suffix: OpenSSL 1.1.1w -> 1.1.1
     v="${v%%[a-zA-Z]*}"
     [[ -n "$v" ]] || return 1
@@ -264,9 +272,13 @@ _phpvm_check_openssl_compat() {
     (( major > 8 )) && return 0
     (( major == 8 && minor >= 1 )) && return 0
 
-    local ssl
+    local ssl ssl_major
     ssl=$(_phpvm_openssl_version) || return 0   # can't tell -> don't block
-    [[ "${ssl%%.*}" -lt 3 ]] && return 0
+    ssl_major="${ssl%%.*}"
+    # A non-numeric major is something this probe doesn't model; `-lt` would
+    # error and fall through to blocking, so fail open here too.
+    [[ "$ssl_major" =~ ^[0-9]+$ ]] || return 0
+    (( ssl_major < 3 )) && return 0
 
     _err "PHP $ver cannot be built against OpenSSL $ssl."
     _dim "OpenSSL 3.0 removed RSA_SSLV23_PADDING; PHP's openssl extension only"
@@ -603,6 +615,12 @@ phpvm_install() {
 
     local cpus
     cpus=$(_phpvm_cpus)
+
+    # One install owns the log. Every step below appends, so without this the
+    # file accumulates across runs and _phpvm_show_build_error's `grep -m1`
+    # reports the first error of an *earlier* build — exactly the wrong line
+    # when someone is retrying the install they just watched fail.
+    : > "$PHPVM_LOG"
 
     # The whole build runs in a subshell so the `cd` cannot escape: phpvm.sh is
     # sourced, so a bare cd here would strand the user's own shell in the build

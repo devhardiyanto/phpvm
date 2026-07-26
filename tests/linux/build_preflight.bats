@@ -22,6 +22,13 @@ _stub_openssl() {
     eval "_phpvm_openssl_version() { echo '$1'; }"
 }
 
+# Pin what `openssl version` reports, to exercise the probe itself. A function
+# satisfies `command -v openssl`, so the probe takes the same path it would on
+# a host that really ships this binary.
+_stub_openssl_cli() {
+    eval "openssl() { [ \"\$1\" = version ] && echo '$1'; }"
+}
+
 # ── OpenSSL compatibility guard ───────────────────────────────────────────────
 
 @test "openssl 3 blocks PHP 7.3" {
@@ -74,6 +81,34 @@ _stub_openssl() {
     [[ "$output" == *"PHPVM_SKIP_OPENSSL_CHECK=1"* ]]
 }
 
+@test "a non-numeric openssl major does not block the build" {
+    _stub_openssl "unknown"
+    run _phpvm_check_openssl_compat 7.3.33
+    [ "$status" -eq 0 ]
+}
+
+@test "libressl reports as unknown rather than blocking" {
+    _stub_openssl_cli "LibreSSL 3.3.6"
+    run _phpvm_openssl_version
+    [ "$status" -eq 1 ]
+    # LibreSSL 3.x still defines RSA_SSLV23_PADDING, so PHP 7.3 must build.
+    run _phpvm_check_openssl_compat 7.3.33
+    [ "$status" -eq 0 ]
+}
+
+@test "boringssl reports as unknown rather than blocking" {
+    _stub_openssl_cli "BoringSSL 3.0.0"
+    run _phpvm_check_openssl_compat 7.3.33
+    [ "$status" -eq 0 ]
+}
+
+@test "a genuine OpenSSL banner still yields a version" {
+    _stub_openssl_cli "OpenSSL 3.0.13 30 Jan 2024"
+    run _phpvm_openssl_version
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ ^[0-9]+(\.[0-9]+)*$ ]]
+}
+
 @test "openssl version probe strips a letter suffix" {
     # Only meaningful when the host actually has one of the probes.
     if ! command -v pkg-config &>/dev/null && ! command -v openssl &>/dev/null; then
@@ -122,4 +157,21 @@ LOG
     run _phpvm_show_build_error
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+# Every build step appends, so one install must start the log from empty or
+# `grep -m1` above surfaces the first error of a *previous* run. Driving a real
+# install here would mean a compiler and ten minutes, so assert the ordering in
+# phpvm_install's own body instead.
+@test "install truncates the build log before anything appends to it" {
+    local src="$BATS_TEST_DIRNAME/../../linux/phpvm.sh"
+    local body trunc append
+    body=$(awk '/^phpvm_install\(\)/{f=1} f{print} f&&/^}$/{exit}' "$src")
+
+    trunc=$(printf '%s\n' "$body" | grep -n ': > "\$PHPVM_LOG"' | head -1 | cut -d: -f1)
+    append=$(printf '%s\n' "$body" | grep -n '>>"\?\$PHPVM_LOG"\?' | head -1 | cut -d: -f1)
+
+    [ -n "$trunc" ]
+    [ -n "$append" ]
+    [ "$trunc" -lt "$append" ]
 }

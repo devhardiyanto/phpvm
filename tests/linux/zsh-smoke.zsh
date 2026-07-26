@@ -65,6 +65,24 @@ print "8.3" > "$tmp/proj/.phpvmrc"
 out=$(cd "$tmp/proj" && _phpvm_read_rc "$tmp/proj/.phpvmrc" 2>&1)
 check "reads a .phpvmrc version" "8.3" "$out"
 
+print -r -- "-- openssl guard (pattern and regex matching) --"
+# The guard leans on [[ != OpenSSL* ]] globbing and [[ =~ ]] regex, both of
+# which zsh parses on its own terms. bats only ever sees the bash reading.
+# Probe first, while the real _phpvm_openssl_version is still in place.
+openssl() { [[ "$1" == version ]] && print "LibreSSL 3.3.6" }
+_phpvm_openssl_version >/dev/null 2>&1
+check "libressl reports as unknown" "1" "$?"
+unset -f openssl
+
+_phpvm_openssl_version() { print 3.0.2 }
+out=$(_phpvm_check_openssl_compat 7.3.33 2>&1)
+check "openssl 3 blocks PHP 7.3" "cannot be built against OpenSSL 3.0.2" "$out"
+_phpvm_check_openssl_compat 8.1.0 >/dev/null 2>&1
+check "openssl 3 allows PHP 8.1" "0" "$?"
+_phpvm_openssl_version() { print unknown }
+_phpvm_check_openssl_compat 7.3.33 >/dev/null 2>&1
+check "non-numeric openssl major fails open" "0" "$?"
+
 print -r -- "-- older-patch hint --"
 mkdir -p "$PHPVM_DIR/versions/8.5.1" "$PHPVM_DIR/versions/8.5.2" "$PHPVM_DIR/versions/8.5.8"
 out=$(_phpvm_older_patch_hint 8.5.8 2>&1)
