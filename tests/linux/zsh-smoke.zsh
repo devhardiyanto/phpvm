@@ -23,6 +23,25 @@ check() {  # check <name> <expected-substring> <actual>
     fi
 }
 
+check_status() {  # check_status <name> <expected> <actual>
+    if [[ "$3" == "$2" ]]; then
+        print "ok   - $1"
+    else
+        print "FAIL - $1 (expected status $2, got $3)"
+        fail=1
+    fi
+}
+
+check_empty() {  # check_empty <name> <actual>
+    if [[ -z "$2" ]]; then
+        print "ok   - $1"
+    else
+        print "FAIL - $1"
+        print "       expected no output, got: $2"
+        fail=1
+    fi
+}
+
 tmp=$(mktemp -d)
 export PHPVM_DIR="$tmp/phpvm"
 export PHPVM_NO_UPDATE_CHECK=1
@@ -87,6 +106,41 @@ print -r -- "-- older-patch hint --"
 mkdir -p "$PHPVM_DIR/versions/8.5.1" "$PHPVM_DIR/versions/8.5.2" "$PHPVM_DIR/versions/8.5.8"
 out=$(_phpvm_older_patch_hint 8.5.8 2>&1)
 check "joins older patches with ', '" "8.5.1, 8.5.2" "$out"
+
+print -r -- "-- build preflight (OpenSSL guard) --"
+# Pin the probe so the result doesn't depend on whatever the runner has.
+_phpvm_openssl_version() { print "3.0.2" }
+
+out=$(_phpvm_check_openssl_compat 7.3.33 2>&1); st=$?
+check "blocks PHP 7.3 on OpenSSL 3" "cannot be built against OpenSSL 3.0.2" "$out"
+check_status "blocks with a non-zero status" 1 $st
+check "names the remedy" "phpvm install 8.1" "$out"
+check "names the bypass" "PHPVM_SKIP_OPENSSL_CHECK=1" "$out"
+
+_phpvm_check_openssl_compat 8.3.10 >/dev/null 2>&1
+check_status "allows PHP 8.3 on OpenSSL 3" 0 $?
+
+_phpvm_openssl_version() { return 1 }
+_phpvm_check_openssl_compat 7.3.33 >/dev/null 2>&1
+check_status "fails open when OpenSSL cannot be probed" 0 $?
+
+_phpvm_openssl_version() { print "3.0.2" }
+PHPVM_SKIP_OPENSSL_CHECK=1 _phpvm_check_openssl_compat 7.3.33 >/dev/null 2>&1
+check_status "honours PHPVM_SKIP_OPENSSL_CHECK" 0 $?
+
+print -r -- "-- build-log error surfacing --"
+export PHPVM_LOG="$tmp/build.log"
+print "ext/openssl/openssl.c:1491:58: error: RSA_SSLV23_PADDING undeclared" > "$PHPVM_LOG"
+out=$(_phpvm_show_build_error 2>&1)
+check "surfaces the first compiler error" "RSA_SSLV23_PADDING" "$out"
+
+print "configure: error: libxml-2.0 not met" > "$PHPVM_LOG"
+out=$(_phpvm_show_build_error 2>&1)
+check "surfaces a configure error" "libxml-2.0" "$out"
+
+print "all good" > "$PHPVM_LOG"
+out=$(_phpvm_show_build_error 2>&1)
+check_empty "stays quiet when the log holds no error" "$out"
 
 rm -rf "$tmp"
 
