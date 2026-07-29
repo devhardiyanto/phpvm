@@ -30,14 +30,17 @@ _fake_php_install() {
 #!/usr/bin/env bash
 # Test double for php. Behavior controlled via env:
 #   FAKE_PHP_EXTS         space-separated extension names for -m
-#   FAKE_PHP_EXT_DIR      value returned for ini_get('extension_dir') / PHP_EXTENSION_DIR
+#   FAKE_PHP_EXT_DIR      value returned for PHP_EXTENSION_DIR (the compiled-in dir)
+#   FAKE_PHP_INI_EXT_DIR  value returned for ini_get('extension_dir'); defaults
+#                         to FAKE_PHP_EXT_DIR, so the two agree unless a test
+#                         deliberately drives them apart
 #   FAKE_PHP_HASH         value returned for hash_file()
 case "$1" in
     -m) printf '%s\n' ${FAKE_PHP_EXTS:-Core openssl} ;;
     -r)
         case "$2" in
             *PHP_EXTENSION_DIR*)            printf '%s' "${FAKE_PHP_EXT_DIR:-/dev/null/ext}" ;;
-            *ini_get*extension_dir*)        printf '%s' "${FAKE_PHP_EXT_DIR:-/dev/null/ext}" ;;
+            *ini_get*extension_dir*)        printf '%s' "${FAKE_PHP_INI_EXT_DIR-${FAKE_PHP_EXT_DIR:-/dev/null/ext}}" ;;
             *hash_file*)                    printf '%s' "${FAKE_PHP_HASH:-deadbeef}" ;;
             *extension_loaded*openssl*)
                 case " ${FAKE_PHP_EXTS:-openssl} " in *" openssl "*) exit 0 ;; *) exit 1 ;; esac ;;
@@ -181,6 +184,119 @@ EOF
     run phpvm_fix_ini
     [ "$status" -ne 0 ]
     [[ "$output" == *"php.ini not found"* ]]
+}
+
+# ---------- phpvm_ext_list / phpvm_ext_loaded ----------
+
+# The row for one extension. Asserting on $output as a whole would let a glob
+# like *redis*OFF* match "redis ... ON" on one line and the "0 OFF" summary on
+# another, which is how a broken ON/OFF marker could slip through green.
+# Colour codes butt straight up against the name ("\033[90mredis"), so strip
+# them before matching or the leading word boundary never appears. printf for
+# the escape rather than \x1b: BSD sed on the macOS runner does not read \x.
+_ext_row() {
+    printf '%s\n' "$output" \
+        | sed "s/$(printf '\033')\[[0-9;]*m//g" \
+        | grep -E "^[[:space:]]*$1[[:space:]]"
+}
+
+@test "ext list: errors when no active version" {
+    eval "_phpvm_current_version() { echo ''; }"
+    run phpvm_ext_list
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"No active PHP version"* ]]
+}
+
+@test "ext list: marks loaded extensions ON" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXTS="Core curl mbstring"
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    run phpvm_ext_list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"curl"*"ON"* ]]
+    [[ "$output" == *"mbstring"*"ON"* ]]
+}
+
+@test "ext list: marks an available-but-unloaded .so OFF" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXTS="Core curl"
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    touch "$FAKE_PHP_EXT_DIR/redis.so" "$FAKE_PHP_EXT_DIR/xdebug.so"
+    run phpvm_ext_list
+    [ "$status" -eq 0 ]
+    [[ "$(_ext_row redis)"  == *OFF* ]]
+    [[ "$(_ext_row xdebug)" == *OFF* ]]
+    # Core and curl are the two loaded ones.
+    [[ "$output" == *"2 ON, 2 OFF"* ]]
+}
+
+@test "ext list: an extension with a .so that is also loaded counts once, as ON" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXTS="Core redis"
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    touch "$FAKE_PHP_EXT_DIR/redis.so"
+    run phpvm_ext_list
+    [ "$status" -eq 0 ]
+    [[ "$(_ext_row redis)" == *ON*  ]]
+    [[ "$(_ext_row redis)" != *OFF* ]]
+    [ "$(_ext_row redis | wc -l)" -eq 1 ]
+    [[ "$output" == *"2 ON, 0 OFF"* ]]
+}
+
+@test "ext list: keeps statically compiled extensions that have no .so" {
+    # The whole reason ON comes from `php -m` and not from the directory: pdo
+    # and mbstring are built into the binary and own no file to find.
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXTS="Core pdo mbstring"
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    run phpvm_ext_list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pdo"* ]]
+    [[ "$output" == *"mbstring"* ]]
+    [[ "$output" == *"3 ON, 0 OFF"* ]]
+}
+
+@test "ext list: strips the php_ prefix some .so files carry" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXTS="Core"
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    touch "$FAKE_PHP_EXT_DIR/php_imagick.so"
+    run phpvm_ext_list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"imagick"*"OFF"* ]]
+    [[ "$output" != *"php_imagick"* ]]
+}
+
+@test "ext list: survives an extension_dir that does not exist" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXTS="Core curl"
+    export FAKE_PHP_EXT_DIR="$BATS_TEST_TMPDIR/nope"
+    run phpvm_ext_list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"curl"*"ON"* ]]
+    [[ "$output" == *"2 ON, 0 OFF"* ]]
+}
+
+@test "ext loaded: shows php -m only, without the OFF entries" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXTS="Core curl"
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    touch "$FAKE_PHP_EXT_DIR/redis.so"
+    run phpvm_ext_loaded
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"curl"* ]]
+    [[ "$output" != *"redis"* ]]
+    [[ "$output" != *"OFF"* ]]
+}
+
+@test "dispatch: 'phpvm ext loaded' no longer routes to ext list" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXTS="Core curl"
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    touch "$FAKE_PHP_EXT_DIR/redis.so"
+    run phpvm ext loaded
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"redis"* ]]
 }
 
 # ---------- phpvm_ext_laravel ----------
@@ -437,6 +553,20 @@ EOF
     [[ "$output" != *"8.5.2 8.5.6"* ]]
 }
 
+# PATH with every directory that ships a php removed. The doctor PATH checks
+# assert on how many PHPs are visible, and CI images (and dev machines) may well
+# have a distro php of their own - dropping them keeps the assertions about the
+# PATH the test built, not the one the host happened to bring.
+_path_without_php() {
+    local out="" d
+    while read -r d; do
+        [[ -z "$d" ]] && continue
+        [[ -x "$d/php" ]] && continue
+        out="${out:+$out:}$d"
+    done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
+    printf '%s' "$out"
+}
+
 # ---------- phpvm_doctor ----------
 
 @test "doctor: warns when no active version" {
@@ -456,6 +586,123 @@ EOF
     run phpvm_doctor
     [ "$status" -eq 0 ]
     [[ "$output" == *"Active PHP version: 8.3.0"* ]]
-    [[ "$output" == *"extension_dir present"* ]]
+    [[ "$output" == *"extension_dir matches active build"* ]]
     [[ "$output" == *"openssl extension loaded"* ]]
+}
+
+@test "doctor: flags an extension_dir left pointing at another version" {
+    _fake_php_install 8.3.0
+    mkdir -p "$PHPVM_VERSIONS/8.2.0/lib/php/extensions"
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    # The stale dir exists, so the old `-d` check would have called this healthy.
+    export FAKE_PHP_INI_EXT_DIR="$PHPVM_VERSIONS/8.2.0/lib/php/extensions"
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"extension_dir mismatch"* ]]
+    [[ "$output" == *"phpvm fix-ini"* ]]
+}
+
+@test "doctor: warns when extension_dir is unset in php.ini" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    export FAKE_PHP_INI_EXT_DIR=""
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No extension_dir set"* ]]
+}
+
+@test "doctor: reads the active version's php, not whatever PATH resolves" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    # A foreign php earlier on PATH that would report a bogus extension_dir if
+    # doctor trusted PATH instead of the version it says is active.
+    mkdir -p "$BATS_TEST_TMPDIR/usrbin"
+    cat > "$BATS_TEST_TMPDIR/usrbin/php" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    -m) echo "Core" ;;
+    -r) printf '%s' "/wrong/ext/dir" ;;
+esac
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/usrbin/php"
+    export PATH="$BATS_TEST_TMPDIR/usrbin:$PATH"
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"extension_dir matches active build"* ]]
+    [[ "$output" != *"/wrong/ext/dir"* ]]
+}
+
+# ---------- phpvm_doctor: PATH shadowing ----------
+
+@test "doctor: names a second php further down PATH" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    mkdir -p "$BATS_TEST_TMPDIR/usrbin"
+    printf '#!/usr/bin/env bash\n' > "$BATS_TEST_TMPDIR/usrbin/php"
+    chmod +x "$BATS_TEST_TMPDIR/usrbin/php"
+    # phpvm wins the lookup, but the distro php is still sitting behind it.
+    export PATH="$PHPVM_VERSIONS/8.3.0/bin:$BATS_TEST_TMPDIR/usrbin:$(_path_without_php)"
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"resolves to phpvm"* ]]
+    [[ "$output" == *"Another PHP on PATH"* ]]
+    [[ "$output" == *"usrbin/php"* ]]
+}
+
+@test "doctor: stays quiet when phpvm is the only php on PATH" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    export PATH="$PHPVM_VERSIONS/8.3.0/bin:$(_path_without_php)"
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"resolves to phpvm"* ]]
+    [[ "$output" != *"Another PHP on PATH"* ]]
+}
+
+@test "doctor: does not report the winner twice as a shadowing php" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    mkdir -p "$BATS_TEST_TMPDIR/usrbin"
+    printf '#!/usr/bin/env bash\n' > "$BATS_TEST_TMPDIR/usrbin/php"
+    chmod +x "$BATS_TEST_TMPDIR/usrbin/php"
+    # Non-phpvm php first: it is the winner *and* the only foreign entry, so it
+    # must be reported once as the resolution problem, not again as a shadow.
+    export PATH="$BATS_TEST_TMPDIR/usrbin:$PHPVM_VERSIONS/8.3.0/bin:$(_path_without_php)"
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"resolves to a non-phpvm install"* ]]
+    [[ "$output" != *"Another PHP on PATH"* ]]
+}
+
+# ---------- phpvm_doctor: host OpenSSL ----------
+
+@test "doctor: warns that OpenSSL 3 rules out building PHP 8.0 and older" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    eval "_phpvm_openssl_version() { echo '3.0.2'; }"
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OpenSSL 3.0.2"* ]]
+    [[ "$output" == *"8.0 and older cannot be built"* ]]
+}
+
+@test "doctor: calls OpenSSL 1.1 fully buildable" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    eval "_phpvm_openssl_version() { echo '1.1.1'; }"
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OpenSSL 1.1.1"* ]]
+    [[ "$output" == *"all supported PHP versions buildable"* ]]
+}
+
+@test "doctor: does not count an undetectable OpenSSL as a warning" {
+    _fake_php_install 8.3.0
+    export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+    eval "_phpvm_openssl_version() { return 1; }"
+    run phpvm_doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"build compatibility unknown"* ]]
+    # Reported as a plain note, never as a [warn] the user is asked to fix.
+    [[ "$output" != *"cannot be built"* ]]
 }

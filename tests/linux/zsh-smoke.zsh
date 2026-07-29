@@ -142,6 +142,96 @@ print "all good" > "$PHPVM_LOG"
 out=$(_phpvm_show_build_error 2>&1)
 check_empty "stays quiet when the log holds no error" "$out"
 
+print -r -- "-- tarball verification --"
+tarball="$tmp/php-8.3.0.tar.gz"
+print "payload" > "$tarball"
+_phpvm_php_sha256()  { print "aaaa" }
+_phpvm_sha256_file() { print "aaaa" }
+out=$(_phpvm_verify_tarball "$tarball" 8.3.0 2>&1); st=$?
+check "accepts a matching digest" "SHA-256 verified" "$out"
+check_status "accepts with status 0" 0 $st
+
+_phpvm_sha256_file() { print "bbbb" }
+out=$(_phpvm_verify_tarball "$tarball" 8.3.0 2>&1); st=$?
+check "rejects a mismatching digest" "SHA-256 mismatch" "$out"
+check_status "rejects with a non-zero status" 1 $st
+if [[ -f "$tarball" ]]; then
+    print "FAIL - deletes the tarball on mismatch"
+    fail=1
+else
+    print "ok   - deletes the tarball on mismatch"
+fi
+
+print "payload" > "$tarball"
+out=$(PHPVM_SKIP_HASH=1 _phpvm_verify_tarball "$tarball" 8.3.0 2>&1); st=$?
+check "honours PHPVM_SKIP_HASH" "Skipping SHA-256 verification" "$out"
+check_status "skips with status 0" 0 $st
+
+_phpvm_php_sha256() { return 1 }
+out=$(_phpvm_verify_tarball "$tarball" 8.3.0 2>&1); st=$?
+check "degrades to a warning with no published digest" "No published SHA-256" "$out"
+check_status "degrades without failing the install" 0 $st
+
+# The real lookup parses JSON with a pipeline; make sure that pipeline behaves
+# under zsh rather than only under bash.
+curl() { print -n '{"source":[{"filename":"php-8.3.0.tar.gz","sha256":"'${(l:64::a:)}'"},{"filename":"php-8.3.0.tar.xz","sha256":"'${(l:64::b:)}'"}]}' }
+unfunction _phpvm_php_sha256 2>/dev/null
+# Re-source to get the real implementation back. NO_INIT so this does not
+# re-run the source-time PATH and hook side effects mid-suite.
+PHPVM_NO_INIT=1 . ./linux/phpvm.sh >/dev/null 2>&1
+out=$(_phpvm_php_sha256 8.3.0 2>&1)
+check "picks the tar.gz digest out of the release JSON" "aaaa" "$out"
+if [[ "$out" == *bbbb* ]]; then
+    print "FAIL - must not return the tar.xz digest"
+    fail=1
+else
+    print "ok   - does not return the tar.xz digest"
+fi
+unfunction curl
+
+print -r -- "-- ext list ON/OFF --"
+export PHPVM_VERSIONS="$PHPVM_DIR/versions"
+extdir="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
+mkdir -p "$PHPVM_VERSIONS/8.3.0/bin" "$extdir"
+cat > "$PHPVM_VERSIONS/8.3.0/bin/php" <<'PHPEOF'
+#!/usr/bin/env bash
+case "$1" in
+    -m) printf '%s\n' Core curl ;;
+    -r) printf '%s' "$FAKE_EXT_DIR" ;;
+esac
+PHPEOF
+chmod +x "$PHPVM_VERSIONS/8.3.0/bin/php"
+export FAKE_EXT_DIR="$extdir"
+touch "$extdir/redis.so"
+_phpvm_current_version() { print "8.3.0" }
+
+out=$(phpvm_ext_list 2>&1)
+check "marks a loaded extension ON" "curl" "$out"
+check "marks an unloaded .so OFF" "OFF" "$out"
+# The counters live in a `while read` loop fed by a here-string. Were that a
+# pipeline, zsh would run it in a subshell and both totals would come back 0.
+check "counters survive the read loop" "2 ON, 1 OFF" "$out"
+
+out=$(phpvm_ext_loaded 2>&1)
+check "ext loaded lists php -m" "curl" "$out"
+if [[ "$out" == *redis* ]]; then
+    print "FAIL - ext loaded must not show unloaded .so files"
+    fail=1
+else
+    print "ok   - ext loaded omits unloaded .so files"
+fi
+
+print -r -- "-- doctor PATH scan --"
+# `for d in $PATH` does not split on colons in zsh; the scan has to tr-split.
+mkdir -p "$tmp/usrbin"
+print '#!/usr/bin/env bash' > "$tmp/usrbin/php"
+chmod +x "$tmp/usrbin/php"
+export PHPVM_BIN="$PHPVM_DIR/bin"
+export PHPVM_CURRENT="$PHPVM_DIR/current"
+out=$(PATH="$PHPVM_VERSIONS/8.3.0/bin:$tmp/usrbin:$PATH" phpvm_doctor 2>&1)
+check "finds the phpvm php first" "resolves to phpvm" "$out"
+check "still names the second php behind it" "Another PHP on PATH" "$out"
+
 rm -rf "$tmp"
 
 print ""

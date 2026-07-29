@@ -87,6 +87,13 @@ A successful `phpvm install` activates the new version automatically — pass
 `--no-use` to skip. Long installs show live progress (download bar on Windows,
 build spinner on Linux), suppressed when output is not a terminal.
 
+**Downloads are verified.** Windows checks the PHP zip against the `sha256sum.txt`
+published next to it; Linux/macOS check the source tarball against the SHA-256 in
+php.net's release metadata, including tarballs served from the local cache. A
+mismatch aborts the install and deletes the file. If no checksum is published, or
+the host has no `sha256sum`/`shasum`/`openssl`, phpvm warns and continues rather
+than blocking an otherwise valid install. Set `PHPVM_SKIP_HASH=1` to opt out.
+
 ### CA bundle (Windows)
 
 Windows PHP builds ship without a CA bundle, so HTTPS from PHP fails with
@@ -110,10 +117,16 @@ fixes each finding — it never changes anything.
 phpvm doctor
 ```
 
-Checks: active version, whether `php` on PATH resolves to phpvm (catches
-XAMPP/Laragon/WAMP shadowing), `extension_dir` vs the active build, and —
-per OS — the CA bundle + VC++ runtime (Windows) or openssl + build toolchain
-(Linux). Start here when something behaves unexpectedly.
+Checks: active version, whether `php` on PATH resolves to phpvm — and whether a
+second PHP is sitting behind it (XAMPP/Laragon/WAMP on Windows, a distro or
+Homebrew `php` on Linux/macOS) — `extension_dir` vs the active build, and —
+per OS — the CA bundle + VC++ runtime (Windows) or openssl, the build toolchain,
+and the host OpenSSL version (Linux/macOS). Start here when something behaves
+unexpectedly.
+
+On Linux/macOS the OpenSSL check reports upfront when the host runs OpenSSL 3,
+which rules out building PHP 8.0 and older. Versions already installed keep
+working; only new builds below 8.1 are refused.
 
 ### Auto-Switch with `.phpvmrc`
 
@@ -139,8 +152,8 @@ Restart your terminal after enabling (Linux: or `exec $SHELL`).
 ### Extension Management
 
 ```bash
-phpvm ext list             # all bundled extensions (ON/OFF)
-phpvm ext loaded           # currently loaded (php -m)
+phpvm ext list             # every extension PHP can load, with ON/OFF state
+phpvm ext loaded           # currently loaded only (php -m)
 phpvm ext info redis       # details about an extension
 phpvm ext enable mbstring  # enable a bundled extension (edits php.ini)
 phpvm ext disable pdo_sqlite
@@ -148,6 +161,11 @@ phpvm ext install redis    # install from PECL
 phpvm ext install mongodb 1.17.0   # specific version
 phpvm ext install xdebug   # Windows: from xdebug.org | Linux: via PECL
 ```
+
+`ext list` shows both sides of the picture: extensions PHP has loaded (`ON`) and
+extensions it *could* load but nothing has enabled yet (`OFF`). On Linux/macOS
+the `OFF` side comes from the `.so` files in `extension_dir`; extensions compiled
+into the binary have no file of their own and always appear as `ON`.
 
 ### Laravel quick setup
 
@@ -245,7 +263,7 @@ sudo apt-get install -y \
 |---|---|---|
 | `PHPVM_DIR` | `~/.phpvm` | phpvm home directory |
 | `EDITOR` | `nano` | Editor used by `phpvm ini` (Linux) |
-| `PHPVM_SKIP_HASH` | _unset_ | When set to `1`, skip SHA-256 verification on Windows installs (use for content-rewriting corporate proxies) |
+| `PHPVM_SKIP_HASH` | _unset_ | When set to `1`, skip SHA-256 verification of downloads (use for content-rewriting corporate proxies) |
 | `PHPVM_NO_UPDATE_CHECK` | _unset_ | When set, skip the daily phpvm update check |
 
 ---
