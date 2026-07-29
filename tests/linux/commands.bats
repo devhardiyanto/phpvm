@@ -553,19 +553,10 @@ _ext_row() {
     [[ "$output" != *"8.5.2 8.5.6"* ]]
 }
 
-# PATH with every directory that ships a php removed. The doctor PATH checks
-# assert on how many PHPs are visible, and CI images (and dev machines) may well
-# have a distro php of their own - dropping them keeps the assertions about the
-# PATH the test built, not the one the host happened to bring.
-_path_without_php() {
-    local out="" d
-    while read -r d; do
-        [[ -z "$d" ]] && continue
-        [[ -x "$d/php" ]] && continue
-        out="${out:+$out:}$d"
-    done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
-    printf '%s' "$out"
-}
+# These checks assert on how many PHPs are visible, and CI images ship a distro
+# php of their own - so where a test needs to own the answer it hands doctor a
+# PATH containing nothing but phpvm. That works because the scan only needs `-x`
+# on each candidate, never to run one, and no external tool to split PATH.
 
 # ---------- phpvm_doctor ----------
 
@@ -641,7 +632,7 @@ EOF
     printf '#!/usr/bin/env bash\n' > "$BATS_TEST_TMPDIR/usrbin/php"
     chmod +x "$BATS_TEST_TMPDIR/usrbin/php"
     # phpvm wins the lookup, but the distro php is still sitting behind it.
-    export PATH="$PHPVM_VERSIONS/8.3.0/bin:$BATS_TEST_TMPDIR/usrbin:$(_path_without_php)"
+    export PATH="$PHPVM_VERSIONS/8.3.0/bin:$BATS_TEST_TMPDIR/usrbin"
     run phpvm_doctor
     [ "$status" -eq 0 ]
     [[ "$output" == *"resolves to phpvm"* ]]
@@ -652,7 +643,7 @@ EOF
 @test "doctor: stays quiet when phpvm is the only php on PATH" {
     _fake_php_install 8.3.0
     export FAKE_PHP_EXT_DIR="$PHPVM_VERSIONS/8.3.0/lib/php/extensions"
-    export PATH="$PHPVM_VERSIONS/8.3.0/bin:$(_path_without_php)"
+    export PATH="$PHPVM_VERSIONS/8.3.0/bin"
     run phpvm_doctor
     [ "$status" -eq 0 ]
     [[ "$output" == *"resolves to phpvm"* ]]
@@ -667,7 +658,7 @@ EOF
     chmod +x "$BATS_TEST_TMPDIR/usrbin/php"
     # Non-phpvm php first: it is the winner *and* the only foreign entry, so it
     # must be reported once as the resolution problem, not again as a shadow.
-    export PATH="$BATS_TEST_TMPDIR/usrbin:$PHPVM_VERSIONS/8.3.0/bin:$(_path_without_php)"
+    export PATH="$BATS_TEST_TMPDIR/usrbin:$PHPVM_VERSIONS/8.3.0/bin"
     run phpvm_doctor
     [ "$status" -eq 0 ]
     [[ "$output" == *"resolves to a non-phpvm install"* ]]

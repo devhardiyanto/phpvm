@@ -925,18 +925,25 @@ phpvm_doctor() {
     #    further down PATH still matters, because it is what comes back the
     #    moment phpvm's bin drops off (a distro upgrade rewriting the rc, a
     #    shell that never sourced phpvm.sh). `command -v` only ever reports the
-    #    winner, so walk PATH ourselves. Splitting via tr keeps this working in
-    #    zsh, where `for d in $PATH` does not split on colons.
-    local php_paths
-    php_paths=$(printf '%s' "$PATH" | tr ':' '\n' | while read -r d; do
-        [[ -n "$d" && -x "$d/php" ]] && printf '%s\n' "$d/php"
-    done | awk '!seen[$0]++')
+    #    winner, so walk PATH ourselves.
+    #
+    #    Split with parameter expansion rather than tr/awk: this is the check
+    #    that tells you PATH is broken, so it must not itself depend on finding
+    #    coreutils there. It also sidesteps zsh, where `for d in $PATH` does not
+    #    split on colons at all.
+    local php_paths="" rest="$PATH" d
+    while [[ -n "$rest" ]]; do
+        d="${rest%%:*}"
+        if [[ "$d" == "$rest" ]]; then rest=""; else rest="${rest#*:}"; fi
+        [[ -n "$d" && -x "$d/php" ]] || continue
+        case ":$php_paths:" in *":$d/php:"*) continue ;; esac   # PATH may repeat
+        php_paths="${php_paths:+$php_paths:}$d/php"
+    done
 
     if [[ -z "$php_paths" ]]; then
         _dwarn "No 'php' on PATH. Run: phpvm use <version> (and source phpvm.sh in your rc)."
     else
-        local first
-        first=$(printf '%s\n' "$php_paths" | head -1)
+        local first="${php_paths%%:*}"
         case "$first" in
             "$PHPVM_CURRENT"/*|"$PHPVM_BIN"/*|"$PHPVM_VERSIONS"/*)
                 _dok "'php' resolves to phpvm: $first" ;;
@@ -945,13 +952,18 @@ phpvm_doctor() {
                 _dim "Ensure $PHPVM_DIR is sourced in your shell rc, then open a new shell." ;;
         esac
 
-        local other
-        other=$(printf '%s\n' "$php_paths" | while read -r p; do
+        local other="" p
+        rest="$php_paths"
+        while [[ -n "$rest" ]]; do
+            p="${rest%%:*}"
+            if [[ "$p" == "$rest" ]]; then rest=""; else rest="${rest#*:}"; fi
             case "$p" in
-                "$PHPVM_CURRENT"/*|"$PHPVM_BIN"/*|"$PHPVM_VERSIONS"/*) ;;
-                *) printf '%s\n' "$p" ;;
+                # `:` rather than an empty body - bash 3.2 on macOS is fussy
+                # about case arms, which is what broke the first cut of this.
+                "$PHPVM_CURRENT"/*|"$PHPVM_BIN"/*|"$PHPVM_VERSIONS"/*) : ;;
+                *) other="$p"; break ;;
             esac
-        done | head -1)
+        done
         if [[ -n "$other" && "$other" != "$first" ]]; then
             _dwarn "Another PHP on PATH: $other"
             _dim "It shadows phpvm whenever phpvm's bin is not first. Remove it or reorder PATH."
