@@ -10,7 +10,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.13.2"
+PHPVM_VERSION="1.14.0"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -462,6 +462,84 @@ _phpvm_resolve_remote() {
     echo "$match"
 }
 
+# Expected SHA-256 for php-<ver>.tar.gz, straight from php.net's release JSON.
+# The per-version endpoint returns a "source" array whose entries each carry a
+# filename and its sha256; splitting on "{" puts one entry per line so the digest
+# next to the .tar.gz filename is the one we pick (never the .xz/.bz2 sibling).
+_phpvm_php_sha256() {
+    local ver="$1"
+    local api="https://www.php.net/releases/index.php?json&version=$ver"
+    local json
+    if command -v curl &>/dev/null; then
+        json=$(curl -fsSL --max-time 10 "$api" 2>/dev/null)
+    elif command -v wget &>/dev/null; then
+        json=$(wget -qO- --timeout=10 "$api" 2>/dev/null)
+    fi
+    [[ -z "$json" ]] && return 1
+
+    local sum
+    sum=$(printf '%s' "$json" \
+        | tr '{' '\n' \
+        | grep -F "\"php-$ver.tar.gz\"" \
+        | grep -oE '"sha256"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"' \
+        | grep -oE '[0-9a-f]{64}' \
+        | head -1)
+    [[ -n "$sum" ]] || return 1
+    echo "$sum"
+}
+
+# Digest a file with whatever the host has. PHP itself is not an option here the
+# way it is for the composer/wp-cli phars - this runs *before* any PHP exists.
+_phpvm_sha256_file() {
+    local file="$1"
+    if command -v sha256sum &>/dev/null; then
+        sha256sum "$file" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum &>/dev/null; then
+        shasum -a 256 "$file" 2>/dev/null | awk '{print $1}'
+    elif command -v openssl &>/dev/null; then
+        openssl dgst -sha256 "$file" 2>/dev/null | awk '{print $NF}'
+    else
+        return 1
+    fi
+}
+
+# Verify a downloaded (or cached) tarball. Mismatch is fatal and takes the file
+# with it; an unavailable digest or a host with no hashing tool degrades to a
+# warning, matching the Windows fallback so an offline mirror or an EOL release
+# that php.net no longer lists cannot brick an otherwise valid install.
+_phpvm_verify_tarball() {
+    local file="$1" ver="$2"
+
+    if [[ -n "${PHPVM_SKIP_HASH:-}" ]]; then
+        _dim "Skipping SHA-256 verification (PHPVM_SKIP_HASH is set)."
+        return 0
+    fi
+
+    local expected
+    if ! expected=$(_phpvm_php_sha256 "$ver") || [[ -z "$expected" ]]; then
+        _warn "No published SHA-256 for PHP $ver - skipping verification."
+        return 0
+    fi
+
+    local actual
+    if ! actual=$(_phpvm_sha256_file "$file") || [[ -z "$actual" ]]; then
+        _warn "No sha256sum/shasum/openssl found - skipping verification."
+        return 0
+    fi
+
+    if [[ "$actual" != "$expected" ]]; then
+        _err "SHA-256 mismatch for $(basename "$file")!"
+        _dim "expected: $expected"
+        _dim "actual:   $actual"
+        _dim "Removing the file. Re-run to download it again."
+        rm -f "$file"
+        return 1
+    fi
+
+    _ok "SHA-256 verified."
+    return 0
+}
+
 # ==============================================================================
 #  phpvm install <version>
 # ==============================================================================
@@ -536,6 +614,11 @@ phpvm_install() {
     else
         _dim "Using cached: $cache_file"
     fi
+
+    # Verify after both paths: a poisoned cache would otherwise be trusted
+    # forever, since a cached tarball never gets re-downloaded.
+    _step "Verifying SHA-256 ..."
+    _phpvm_verify_tarball "$cache_file" "$ver" || return 1
 
     # Extract
     local src_dir="$PHPVM_CACHE/php-$ver"
@@ -838,30 +921,80 @@ phpvm_doctor() {
         _dwarn "No active PHP version. Run: phpvm use <version>"
     fi
 
-    # 2. PATH: whichever php resolves first is what runs.
-    if command -v php &>/dev/null; then
-        local php_path
-        php_path=$(command -v php)
-        case "$php_path" in
+    # 2. PATH: whichever php resolves first is what runs - but a second PHP
+    #    further down PATH still matters, because it is what comes back the
+    #    moment phpvm's bin drops off (a distro upgrade rewriting the rc, a
+    #    shell that never sourced phpvm.sh). `command -v` only ever reports the
+    #    winner, so walk PATH ourselves.
+    #
+    #    Split with parameter expansion rather than tr/awk: this is the check
+    #    that tells you PATH is broken, so it must not itself depend on finding
+    #    coreutils there. It also sidesteps zsh, where `for d in $PATH` does not
+    #    split on colons at all.
+    local php_paths="" rest="$PATH" d
+    while [[ -n "$rest" ]]; do
+        d="${rest%%:*}"
+        if [[ "$d" == "$rest" ]]; then rest=""; else rest="${rest#*:}"; fi
+        [[ -n "$d" && -x "$d/php" ]] || continue
+        case ":$php_paths:" in *":$d/php:"*) continue ;; esac   # PATH may repeat
+        php_paths="${php_paths:+$php_paths:}$d/php"
+    done
+
+    if [[ -z "$php_paths" ]]; then
+        _dwarn "No 'php' on PATH. Run: phpvm use <version> (and source phpvm.sh in your rc)."
+    else
+        local first="${php_paths%%:*}"
+        case "$first" in
             "$PHPVM_CURRENT"/*|"$PHPVM_BIN"/*|"$PHPVM_VERSIONS"/*)
-                _dok "'php' resolves to phpvm: $php_path" ;;
+                _dok "'php' resolves to phpvm: $first" ;;
             *)
-                _dwarn "'php' resolves to a non-phpvm install: $php_path"
+                _dwarn "'php' resolves to a non-phpvm install: $first"
                 _dim "Ensure $PHPVM_DIR is sourced in your shell rc, then open a new shell." ;;
         esac
-    else
-        _dwarn "No 'php' on PATH. Run: phpvm use <version> (and source phpvm.sh in your rc)."
+
+        local other="" p
+        rest="$php_paths"
+        while [[ -n "$rest" ]]; do
+            p="${rest%%:*}"
+            if [[ "$p" == "$rest" ]]; then rest=""; else rest="${rest#*:}"; fi
+            case "$p" in
+                # `:` rather than an empty body - bash 3.2 on macOS is fussy
+                # about case arms, which is what broke the first cut of this.
+                "$PHPVM_CURRENT"/*|"$PHPVM_BIN"/*|"$PHPVM_VERSIONS"/*) : ;;
+                *) other="$p"; break ;;
+            esac
+        done
+        if [[ -n "$other" && "$other" != "$first" ]]; then
+            _dwarn "Another PHP on PATH: $other"
+            _dim "It shadows phpvm whenever phpvm's bin is not first. Remove it or reorder PATH."
+        fi
     fi
 
-    # 3. extension_dir readable for the active build.
+    # 3. extension_dir must match what the active build was compiled with.
+    #    Checking the directory merely exists passes an ini left pointing at a
+    #    different version - the exact case fix-ini exists to repair. Go through
+    #    the version's own binary, not PATH: check 2 may have just told us PATH
+    #    resolves somewhere else entirely.
     if [[ -n "$cur" ]]; then
-        local ext_dir
-        ext_dir=$(php -r "echo ini_get('extension_dir');" 2>/dev/null)
-        if [[ -n "$ext_dir" && -d "$ext_dir" ]]; then
-            _dok "extension_dir present: $ext_dir"
+        local doc_php="$PHPVM_VERSIONS/$cur/bin/php"
+        if [[ ! -x "$doc_php" ]]; then
+            _dwarn "php binary missing for active version: $doc_php"
         else
-            _dwarn "extension_dir not found or unreadable for active version."
-            _dim "Fix with: phpvm fix-ini"
+            local ext_dir built_dir
+            ext_dir=$("$doc_php" -r "echo ini_get('extension_dir');" 2>/dev/null)
+            built_dir=$("$doc_php" -r "echo PHP_EXTENSION_DIR;" 2>/dev/null)
+            if [[ -z "$ext_dir" ]]; then
+                _dwarn "No extension_dir set in the active php.ini."
+                _dim "Fix with: phpvm fix-ini"
+            elif [[ "${ext_dir%/}" != "${built_dir%/}" ]]; then
+                _dwarn "extension_dir mismatch: '$ext_dir' != '$built_dir'"
+                _dim "Fix with: phpvm fix-ini"
+            elif [[ ! -d "$ext_dir" ]]; then
+                _dwarn "extension_dir does not exist: $ext_dir"
+                _dim "Fix with: phpvm fix-ini"
+            else
+                _dok "extension_dir matches active build."
+            fi
         fi
     fi
 
@@ -884,6 +1017,22 @@ phpvm_doctor() {
     else
         _dwarn "Missing build tools: ${missing[*]}"
         _dim "See: phpvm deps"
+    fi
+
+    # 6. Host OpenSSL vs what is still buildable here. `install` already refuses
+    #    PHP <8.1 on OpenSSL 3 (_phpvm_check_openssl_compat), but only once you
+    #    have waited for a download - doctor should say it upfront.
+    local host_ssl
+    if host_ssl=$(_phpvm_openssl_version) && [[ -n "$host_ssl" ]]; then
+        local ssl_major="${host_ssl%%.*}"
+        if [[ "$ssl_major" =~ ^[0-9]+$ ]] && (( ssl_major >= 3 )); then
+            _dwarn "OpenSSL $host_ssl - PHP 8.0 and older cannot be built on this host."
+            _dim "Installed versions keep working; only new builds below 8.1 are refused."
+        else
+            _dok "OpenSSL $host_ssl (all supported PHP versions buildable)."
+        fi
+    else
+        _dim "  OpenSSL version could not be determined - build compatibility unknown."
     fi
 
     echo ""
@@ -925,14 +1074,65 @@ phpvm_deps() {
 #  EXT COMMANDS
 # ==============================================================================
 
+# Everything PHP could load, with its current state - the Windows `ext list`
+# shape. The ON side has to come from `php -m` rather than from a directory
+# listing, because extensions compiled into the binary (pdo, mbstring, ...) have
+# no .so to find; the OFF side is the .so files nothing has switched on yet.
 phpvm_ext_list() {
     local cur
     cur=$(_phpvm_current_version)
     [[ -z "$cur" ]] && { _err "No active PHP version."; return 1; }
 
+    local php_bin="$PHPVM_VERSIONS/$cur/bin/php"
+    [[ ! -x "$php_bin" ]] && { _err "php binary not found: $php_bin"; return 1; }
+
+    local loaded
+    loaded=$("$php_bin" -m 2>/dev/null | grep -v '^\[' | grep -v '^[[:space:]]*$' \
+        | tr '[:upper:]' '[:lower:]' | sort -u)
+
+    local ext_dir available=""
+    ext_dir=$("$php_bin" -r "echo ini_get('extension_dir');" 2>/dev/null)
+    if [[ -n "$ext_dir" && -d "$ext_dir" ]]; then
+        available=$(find "$ext_dir" -maxdepth 1 -name '*.so' 2>/dev/null \
+            | while read -r so; do
+                so=$(basename "$so" .so)
+                printf '%s\n' "${so#php_}"
+              done | tr '[:upper:]' '[:lower:]' | sort -u)
+    fi
+
+    echo ""
+    echo -e "  \033[36mPHP $cur — extensions:\033[0m"
+    echo ""
+
+    local on=0 off=0 name
+    while read -r name; do
+        [[ -z "$name" ]] && continue
+        if printf '%s\n' "$loaded" | grep -qx -- "$name"; then
+            printf "    \033[32m%-20s ON\033[0m\n" "$name"
+            on=$((on+1))
+        else
+            printf "    \033[90m%-20s OFF   (.so available)\033[0m\n" "$name"
+            off=$((off+1))
+        fi
+    done <<< "$(printf '%s\n%s\n' "$loaded" "$available" | grep -v '^[[:space:]]*$' | sort -u)"
+
+    echo ""
+    _dim "$on ON, $off OFF. Enable: phpvm ext enable <name>"
+    echo ""
+}
+
+# `php -m` verbatim - what the runtime actually has loaded, nothing inferred.
+phpvm_ext_loaded() {
+    local cur
+    cur=$(_phpvm_current_version)
+    [[ -z "$cur" ]] && { _err "No active PHP version."; return 1; }
+
+    local php_bin="$PHPVM_VERSIONS/$cur/bin/php"
+    [[ ! -x "$php_bin" ]] && { _err "php binary not found: $php_bin"; return 1; }
+
     echo ""
     echo -e "  \033[36mPHP $cur — loaded extensions:\033[0m"
-    php -m 2>/dev/null | grep -v '^\[' | sort | while read -r ext; do
+    "$php_bin" -m 2>/dev/null | grep -v '^\[' | grep -v '^[[:space:]]*$' | sort | while read -r ext; do
         echo -e "    \033[32m$ext\033[0m"
     done
     echo ""
@@ -1206,7 +1406,7 @@ phpvm_ext() {
 
     case "$sub" in
         list|ls)   phpvm_ext_list ;;
-        loaded)    phpvm_ext_list ;;
+        loaded)    phpvm_ext_loaded ;;
         install)   phpvm_ext_install "$name" "$ver" ;;
         enable)    phpvm_ext_enable  "$name" ;;
         disable)   phpvm_ext_disable "$name" ;;
@@ -1411,7 +1611,8 @@ phpvm_ext_help() {
   phpvm ext — Extension Manager (Linux)
   ─────────────────────────────────────────────────────────
 
-  phpvm ext list                   Show loaded extensions
+  phpvm ext list                   Available extensions (ON/OFF)
+  phpvm ext loaded                 Loaded extensions (php -m)
   phpvm ext enable  <name>         Enable via conf.d ini drop-in
   phpvm ext disable <name>         Disable extension
   phpvm ext install <name>         Install via PECL
@@ -1471,7 +1672,8 @@ phpvm_help() {
     phpvm ext laravel full         Required + recommended + Redis
 
   EXTENSION MANAGEMENT
-    phpvm ext list                 Show loaded extensions
+    phpvm ext list                 Available extensions (ON/OFF)
+    phpvm ext loaded               Loaded extensions (php -m)
     phpvm ext enable  <name>       Enable extension (conf.d drop-in)
     phpvm ext disable <name>       Disable extension
     phpvm ext install <name>       Install via PECL
