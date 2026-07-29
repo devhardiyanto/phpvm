@@ -8,10 +8,18 @@ setup() {
     export PHPVM_CURRENT="$PHPVM_DIR/current"
     export PHPVM_NO_INIT=1
     export PHPVM_NO_UPDATE_CHECK=1
+    export _ORIG_PATH="$PATH"
     mkdir -p "$PHPVM_VERSIONS"
 
     # shellcheck disable=SC1091
     . "$BATS_TEST_DIRNAME/../../linux/phpvm.sh"
+}
+
+# The PATH checks below hand doctor a PATH with no /usr/bin in it. bats runs its
+# own cleanup (rm) after the test with whatever PATH the test left behind, so
+# hand it back or the run dies in teardown with every assertion green.
+teardown() {
+    export PATH="$_ORIG_PATH"
 }
 
 # Stand up a fake PHP install at $PHPVM_VERSIONS/$1 with a fake php binary
