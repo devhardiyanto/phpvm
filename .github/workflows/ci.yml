@@ -63,7 +63,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck bats
 
+      - name: Verify phpvm.sh matches linux/src (drift check)
+        run: bash ./build.sh --check
+
       - name: ShellCheck
+        # Deliberately only the generated file: linux/src/*.sh are fragments,
+        # not standalone scripts. The drift check above guarantees the generated
+        # file is what those modules say.
         run: shellcheck linux/install.sh linux/phpvm.sh
 
       - name: Bats (offline)
