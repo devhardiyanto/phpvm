@@ -395,22 +395,28 @@ TS/NTS + toolchain and downloads matching extension DLLs.
 
 ## Development
 
-`windows/phpvm.ps1` is **generated** — do not edit it directly. The Windows
-sources live in `windows/src/*.ps1`, one file per domain, and are concatenated
-back into the single shipped script:
+`windows/phpvm.ps1` and `linux/phpvm.sh` are **generated** — do not edit them
+directly. The sources live in `windows/src/*.ps1` and `linux/src/*.sh`, one file
+per domain, and are concatenated back into the single shipped script per OS:
 
 ```powershell
 pwsh ./build.ps1          # rebuild windows/phpvm.ps1 from windows/src/
 pwsh ./build.ps1 -Check   # fail if the two have drifted (what CI gates on)
 ```
 
-The numeric filename prefixes set the concat order and are load-bearing:
-`00-header.ps1` opens with `param()`, which PowerShell requires to be the first
-statement, and `99-entry.ps1` closes with the command dispatch, which has to see
-every function already defined. Distribution is unaffected — the installer and
-`phpvm upgrade` still fetch one file.
+```bash
+bash ./build.sh           # rebuild linux/phpvm.sh from linux/src/
+bash ./build.sh --check   # fail if the two have drifted (what CI gates on)
+```
 
-`linux/phpvm.sh` is hand-written and not part of the build.
+The numeric filename prefixes set the concat order. On Windows it is
+load-bearing throughout: `00-header.ps1` opens with `param()`, which PowerShell
+requires to be the first statement, and `99-entry.ps1` closes with the command
+dispatch, which has to see every function already defined. On Linux only the
+ends matter — bash resolves function bodies at call time, so `00-header.sh`
+(constants) must come first and `99-entry.sh` (source-time init) last; the
+modules in between are ordered for readability. Distribution is unaffected — the
+installer and `phpvm upgrade` still fetch one file per OS.
 
 Tests:
 

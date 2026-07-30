@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 # ==============================================================================
+#  GENERATED FILE - DO NOT EDIT
+#  Built from linux/src/*.sh (concatenated in filename order).
+#  Edit a module there, then run:  bash ./build.sh
+#  CI fails the drift check if this file and the modules disagree.
+# ==============================================================================
+
+# --- src/00-header.sh --------------------------------------------------------------
+# ==============================================================================
 #  phpvm — PHP Version Manager for Linux
 #  Installs PHP from source (php.net). Manages per-version installs.
 #  Repo: https://github.com/devhardiyanto/phpvm
@@ -10,7 +18,7 @@
 #    phpvm use 8.3.0
 # ==============================================================================
 
-PHPVM_VERSION="1.14.0"
+PHPVM_VERSION="1.15.0"
 PHPVM_DIR="${PHPVM_DIR:-$HOME/.phpvm}"
 PHPVM_VERSIONS="$PHPVM_DIR/versions"
 PHPVM_CURRENT="$PHPVM_DIR/current"
@@ -21,6 +29,7 @@ PHPVM_UPDATE_URL="https://raw.githubusercontent.com/devhardiyanto/phpvm/main/ver
 PHPVM_LAST_CHECK="$PHPVM_DIR/.last_update_check"
 PHPVM_CHECK_INTERVAL=3600  # 1 hour
 
+# --- src/10-output.sh --------------------------------------------------------------
 # ── Colors ────────────────────────────────────────────────────────────────────
 # printf (not echo -e): the message is passed through %s so backslashes in the
 # text — e.g. the trailing `\` of a multi-line shell command — stay literal and
@@ -101,118 +110,7 @@ _phpvm_ensure_bin_path() {
     esac
 }
 
-# ── Auto-switch (.phpvmrc) ────────────────────────────────────────────────────
-# Walk from $1 (default $PWD) up to / looking for .phpvmrc.
-# shellcheck disable=SC2120  # optional arg with PWD default - tests pass an arg.
-_phpvm_find_rc() {
-    local dir="${1:-$PWD}"
-    while [[ -n "$dir" ]]; do
-        if [[ -f "$dir/.phpvmrc" ]]; then
-            echo "$dir/.phpvmrc"
-            return 0
-        fi
-        [[ "$dir" == "/" ]] && return 1
-        dir=$(dirname "$dir")
-    done
-    return 1
-}
-
-# First non-comment, non-empty line; strip inline #-comments and a leading `v`.
-_phpvm_read_rc() {
-    local file="$1"
-    [[ -f "$file" ]] || return 1
-    local line
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        line="${line%%#*}"
-        line="${line#"${line%%[![:space:]]*}"}"
-        line="${line%"${line##*[![:space:]]}"}"
-        if [[ -n "$line" ]]; then
-            echo "${line#v}"
-            return 0
-        fi
-    done < "$file"
-    return 1
-}
-
-# Map an rc version onto an installed version dir. Full semver passes through
-# if installed; major.minor picks the highest installed patch.
-_phpvm_resolve_rc() {
-    local requested="$1"
-    [[ -z "$requested" ]] && return 1
-    if [[ -d "$PHPVM_VERSIONS/$requested/bin" ]]; then
-        echo "$requested"
-        return 0
-    fi
-    if [[ "$requested" =~ ^[0-9]+\.[0-9]+$ ]]; then
-        local match
-        match=$(find "$PHPVM_VERSIONS" -mindepth 1 -maxdepth 1 -type d -name "${requested}.*" 2>/dev/null \
-                | while read -r d; do [[ -x "$d/bin/php" ]] && basename "$d"; done \
-                | sort -V | tail -1)
-        if [[ -n "$match" ]]; then
-            echo "$match"
-            return 0
-        fi
-    fi
-    return 1
-}
-
-# Apply .phpvmrc to current shell. Session-only PATH change; tracked via
-# $PHPVM_AUTO_ACTIVE so repeat calls no-op and leaving a project cleans up.
-# Flags: -s / --silent for hook usage.
-_phpvm_auto() {
-    local silent=0
-    [[ "$1" == "-s" || "$1" == "--silent" ]] && silent=1
-
-    local rc resolved requested
-    if ! rc=$(_phpvm_find_rc); then
-        if [[ -n "${PHPVM_AUTO_ACTIVE:-}" ]]; then
-            local old="$PHPVM_VERSIONS/$PHPVM_AUTO_ACTIVE/bin"
-            PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':' -)
-            export PATH
-            unset PHPVM_AUTO_ACTIVE
-            [[ $silent -eq 0 ]] && _dim "Cleared auto PHP (no .phpvmrc upstream)."
-        fi
-        return 0
-    fi
-
-    if ! requested=$(_phpvm_read_rc "$rc"); then
-        [[ $silent -eq 0 ]] && _warn "$rc is empty or comment-only."
-        return 0
-    fi
-
-    if ! resolved=$(_phpvm_resolve_rc "$requested"); then
-        [[ $silent -eq 0 ]] && {
-            _warn "PHP $requested (from $rc) is not installed."
-            _dim  "Run: phpvm install $requested"
-        }
-        return 0
-    fi
-
-    [[ "${PHPVM_AUTO_ACTIVE:-}" == "$resolved" ]] && return 0
-
-    if [[ -n "${PHPVM_AUTO_ACTIVE:-}" ]]; then
-        local old="$PHPVM_VERSIONS/$PHPVM_AUTO_ACTIVE/bin"
-        PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':' -)
-    fi
-
-    local new="$PHPVM_VERSIONS/$resolved/bin"
-    export PATH="$new:$PATH"
-    export PHPVM_AUTO_ACTIVE="$resolved"
-    if [[ $silent -eq 0 ]]; then _ok "Auto-switched to PHP $resolved  (from $rc)"; fi
-    return 0
-}
-
-# ── Is phpvm sourced from a shell rc? ─────────────────────────────────────────
-# True if any login rc already sources phpvm.sh, meaning `use` will persist
-# across sessions and the "add to your rc" warning would just be noise.
-_phpvm_in_rc() {
-    local f
-    for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.bash_profile"; do
-        [[ -f "$f" ]] && grep -Fq "$PHPVM_DIR/phpvm.sh" "$f" && return 0
-    done
-    return 1
-}
-
+# --- src/20-os.sh ------------------------------------------------------------------
 # ── Get current version ───────────────────────────────────────────────────────
 _phpvm_current_version() {
     if [[ -L "$PHPVM_CURRENT" ]]; then
@@ -234,6 +132,12 @@ _phpvm_detect_os() {
     fi
 }
 
+# ── CPU count ─────────────────────────────────────────────────────────────────
+_phpvm_cpus() {
+    nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2
+}
+
+# --- src/25-openssl.sh -------------------------------------------------------------
 # Version of the OpenSSL that ./configure will actually resolve. pkg-config is
 # what configure consults, so ask it first; the `openssl` CLI is a fallback and
 # can disagree with the installed headers. Echoes "3.0.2"; non-zero if unknown.
@@ -292,6 +196,8 @@ _phpvm_check_openssl_compat() {
 }
 
 # ── Check build dependencies ──────────────────────────────────────────────────
+
+# --- src/30-deps.sh ----------------------------------------------------------------
 _phpvm_check_deps() {
     local missing=()
     local tools=("gcc" "make" "autoconf" "bison" "re2c" "pkg-config")
@@ -357,11 +263,7 @@ _phpvm_print_dep_install() {
     echo ""
 }
 
-# ── CPU count ─────────────────────────────────────────────────────────────────
-_phpvm_cpus() {
-    nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2
-}
-
+# --- src/35-buildlog.sh ------------------------------------------------------------
 # Run a long build step with its output appended to $PHPVM_LOG, showing a live
 # spinner + elapsed time so a multi-minute `make` never looks hung.
 #   _phpvm_run_logged "Building with 8 cores" make -j8
@@ -431,6 +333,7 @@ _phpvm_show_build_error() {
     _dim "  ${first}"
 }
 
+# --- src/40-net.sh -----------------------------------------------------------------
 # Resolve a partial version to the highest published patch on php.net.
 #   "8"   -> latest 8.x   (e.g. 8.5.7)
 #   "8.3" -> latest 8.3.x (e.g. 8.3.31)
@@ -540,6 +443,7 @@ _phpvm_verify_tarball() {
     return 0
 }
 
+# --- src/45-install.sh -------------------------------------------------------------
 # ==============================================================================
 #  phpvm install <version>
 # ==============================================================================
@@ -795,6 +699,7 @@ _phpvm_older_patch_hint() {
     _dim "Remove it with: phpvm uninstall $newest"
 }
 
+# --- src/50-version.sh -------------------------------------------------------------
 # ==============================================================================
 #  phpvm use <version>
 # ==============================================================================
@@ -901,152 +806,6 @@ phpvm_which() {
 }
 
 # ==============================================================================
-#  phpvm doctor  — read-only health check (never mutates state)
-# ==============================================================================
-phpvm_doctor() {
-    echo ""
-    echo -e "  \033[36mphpvm doctor — environment health check\033[0m"
-    echo -e "  \033[36m─────────────────────────────────────────────────────────\033[0m"
-
-    local ok=0 warn=0
-    _dok()  { printf '  \033[32m[ok]   %s\033[0m\n' "$*"; ok=$((ok+1)); }
-    _dwarn(){ printf '  \033[33m[warn] %s\033[0m\n' "$*"; warn=$((warn+1)); }
-
-    # 1. Active version + symlink health.
-    local cur
-    cur=$(_phpvm_current_version)
-    if [[ -n "$cur" ]]; then
-        _dok "Active PHP version: $cur"
-    else
-        _dwarn "No active PHP version. Run: phpvm use <version>"
-    fi
-
-    # 2. PATH: whichever php resolves first is what runs - but a second PHP
-    #    further down PATH still matters, because it is what comes back the
-    #    moment phpvm's bin drops off (a distro upgrade rewriting the rc, a
-    #    shell that never sourced phpvm.sh). `command -v` only ever reports the
-    #    winner, so walk PATH ourselves.
-    #
-    #    Split with parameter expansion rather than tr/awk: this is the check
-    #    that tells you PATH is broken, so it must not itself depend on finding
-    #    coreutils there. It also sidesteps zsh, where `for d in $PATH` does not
-    #    split on colons at all.
-    local php_paths="" rest="$PATH" d
-    while [[ -n "$rest" ]]; do
-        d="${rest%%:*}"
-        if [[ "$d" == "$rest" ]]; then rest=""; else rest="${rest#*:}"; fi
-        [[ -n "$d" && -x "$d/php" ]] || continue
-        case ":$php_paths:" in *":$d/php:"*) continue ;; esac   # PATH may repeat
-        php_paths="${php_paths:+$php_paths:}$d/php"
-    done
-
-    if [[ -z "$php_paths" ]]; then
-        _dwarn "No 'php' on PATH. Run: phpvm use <version> (and source phpvm.sh in your rc)."
-    else
-        local first="${php_paths%%:*}"
-        case "$first" in
-            "$PHPVM_CURRENT"/*|"$PHPVM_BIN"/*|"$PHPVM_VERSIONS"/*)
-                _dok "'php' resolves to phpvm: $first" ;;
-            *)
-                _dwarn "'php' resolves to a non-phpvm install: $first"
-                _dim "Ensure $PHPVM_DIR is sourced in your shell rc, then open a new shell." ;;
-        esac
-
-        local other="" p
-        rest="$php_paths"
-        while [[ -n "$rest" ]]; do
-            p="${rest%%:*}"
-            if [[ "$p" == "$rest" ]]; then rest=""; else rest="${rest#*:}"; fi
-            case "$p" in
-                # `:` rather than an empty body - bash 3.2 on macOS is fussy
-                # about case arms, which is what broke the first cut of this.
-                "$PHPVM_CURRENT"/*|"$PHPVM_BIN"/*|"$PHPVM_VERSIONS"/*) : ;;
-                *) other="$p"; break ;;
-            esac
-        done
-        if [[ -n "$other" && "$other" != "$first" ]]; then
-            _dwarn "Another PHP on PATH: $other"
-            _dim "It shadows phpvm whenever phpvm's bin is not first. Remove it or reorder PATH."
-        fi
-    fi
-
-    # 3. extension_dir must match what the active build was compiled with.
-    #    Checking the directory merely exists passes an ini left pointing at a
-    #    different version - the exact case fix-ini exists to repair. Go through
-    #    the version's own binary, not PATH: check 2 may have just told us PATH
-    #    resolves somewhere else entirely.
-    if [[ -n "$cur" ]]; then
-        local doc_php="$PHPVM_VERSIONS/$cur/bin/php"
-        if [[ ! -x "$doc_php" ]]; then
-            _dwarn "php binary missing for active version: $doc_php"
-        else
-            local ext_dir built_dir
-            ext_dir=$("$doc_php" -r "echo ini_get('extension_dir');" 2>/dev/null)
-            built_dir=$("$doc_php" -r "echo PHP_EXTENSION_DIR;" 2>/dev/null)
-            if [[ -z "$ext_dir" ]]; then
-                _dwarn "No extension_dir set in the active php.ini."
-                _dim "Fix with: phpvm fix-ini"
-            elif [[ "${ext_dir%/}" != "${built_dir%/}" ]]; then
-                _dwarn "extension_dir mismatch: '$ext_dir' != '$built_dir'"
-                _dim "Fix with: phpvm fix-ini"
-            elif [[ ! -d "$ext_dir" ]]; then
-                _dwarn "extension_dir does not exist: $ext_dir"
-                _dim "Fix with: phpvm fix-ini"
-            else
-                _dok "extension_dir matches active build."
-            fi
-        fi
-    fi
-
-    # 4. OpenSSL in PHP (HTTPS for composer / ext downloads).
-    if [[ -n "$cur" ]] && php -m 2>/dev/null | grep -qi '^openssl$'; then
-        _dok "openssl extension loaded (HTTPS OK)."
-    elif [[ -n "$cur" ]]; then
-        _dwarn "openssl not loaded — composer/HTTPS may fail."
-        _dim "Enable with: phpvm ext enable openssl"
-    fi
-
-    # 5. Build toolchain (needed for future installs — build from source).
-    local missing=()
-    local t
-    for t in gcc make autoconf bison re2c pkg-config; do
-        command -v "$t" &>/dev/null || missing+=("$t")
-    done
-    if [[ ${#missing[@]} -eq 0 ]]; then
-        _dok "Build toolchain present (install/build ready)."
-    else
-        _dwarn "Missing build tools: ${missing[*]}"
-        _dim "See: phpvm deps"
-    fi
-
-    # 6. Host OpenSSL vs what is still buildable here. `install` already refuses
-    #    PHP <8.1 on OpenSSL 3 (_phpvm_check_openssl_compat), but only once you
-    #    have waited for a download - doctor should say it upfront.
-    local host_ssl
-    if host_ssl=$(_phpvm_openssl_version) && [[ -n "$host_ssl" ]]; then
-        local ssl_major="${host_ssl%%.*}"
-        if [[ "$ssl_major" =~ ^[0-9]+$ ]] && (( ssl_major >= 3 )); then
-            _dwarn "OpenSSL $host_ssl - PHP 8.0 and older cannot be built on this host."
-            _dim "Installed versions keep working; only new builds below 8.1 are refused."
-        else
-            _dok "OpenSSL $host_ssl (all supported PHP versions buildable)."
-        fi
-    else
-        _dim "  OpenSSL version could not be determined - build compatibility unknown."
-    fi
-
-    echo ""
-    if [[ $warn -eq 0 ]]; then
-        _ok "All checks passed ($ok ok)."
-    else
-        _warn "$warn warning(s), $ok ok. See fixes above."
-    fi
-    echo ""
-
-    unset -f _dok _dwarn 2>/dev/null
-}
-
-# ==============================================================================
 #  phpvm ini
 # ==============================================================================
 phpvm_ini() {
@@ -1070,6 +829,163 @@ phpvm_deps() {
     _phpvm_print_dep_install
 }
 
+# --- src/55-auto.sh ----------------------------------------------------------------
+# ── Auto-switch (.phpvmrc) ────────────────────────────────────────────────────
+# Walk from $1 (default $PWD) up to / looking for .phpvmrc.
+# shellcheck disable=SC2120  # optional arg with PWD default - tests pass an arg.
+_phpvm_find_rc() {
+    local dir="${1:-$PWD}"
+    while [[ -n "$dir" ]]; do
+        if [[ -f "$dir/.phpvmrc" ]]; then
+            echo "$dir/.phpvmrc"
+            return 0
+        fi
+        [[ "$dir" == "/" ]] && return 1
+        dir=$(dirname "$dir")
+    done
+    return 1
+}
+
+# First non-comment, non-empty line; strip inline #-comments and a leading `v`.
+_phpvm_read_rc() {
+    local file="$1"
+    [[ -f "$file" ]] || return 1
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        if [[ -n "$line" ]]; then
+            echo "${line#v}"
+            return 0
+        fi
+    done < "$file"
+    return 1
+}
+
+# Map an rc version onto an installed version dir. Full semver passes through
+# if installed; major.minor picks the highest installed patch.
+_phpvm_resolve_rc() {
+    local requested="$1"
+    [[ -z "$requested" ]] && return 1
+    if [[ -d "$PHPVM_VERSIONS/$requested/bin" ]]; then
+        echo "$requested"
+        return 0
+    fi
+    if [[ "$requested" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        local match
+        match=$(find "$PHPVM_VERSIONS" -mindepth 1 -maxdepth 1 -type d -name "${requested}.*" 2>/dev/null \
+                | while read -r d; do [[ -x "$d/bin/php" ]] && basename "$d"; done \
+                | sort -V | tail -1)
+        if [[ -n "$match" ]]; then
+            echo "$match"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Apply .phpvmrc to current shell. Session-only PATH change; tracked via
+# $PHPVM_AUTO_ACTIVE so repeat calls no-op and leaving a project cleans up.
+# Flags: -s / --silent for hook usage.
+_phpvm_auto() {
+    local silent=0
+    [[ "$1" == "-s" || "$1" == "--silent" ]] && silent=1
+
+    local rc resolved requested
+    if ! rc=$(_phpvm_find_rc); then
+        if [[ -n "${PHPVM_AUTO_ACTIVE:-}" ]]; then
+            local old="$PHPVM_VERSIONS/$PHPVM_AUTO_ACTIVE/bin"
+            PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':' -)
+            export PATH
+            unset PHPVM_AUTO_ACTIVE
+            [[ $silent -eq 0 ]] && _dim "Cleared auto PHP (no .phpvmrc upstream)."
+        fi
+        return 0
+    fi
+
+    if ! requested=$(_phpvm_read_rc "$rc"); then
+        [[ $silent -eq 0 ]] && _warn "$rc is empty or comment-only."
+        return 0
+    fi
+
+    if ! resolved=$(_phpvm_resolve_rc "$requested"); then
+        [[ $silent -eq 0 ]] && {
+            _warn "PHP $requested (from $rc) is not installed."
+            _dim  "Run: phpvm install $requested"
+        }
+        return 0
+    fi
+
+    [[ "${PHPVM_AUTO_ACTIVE:-}" == "$resolved" ]] && return 0
+
+    if [[ -n "${PHPVM_AUTO_ACTIVE:-}" ]]; then
+        local old="$PHPVM_VERSIONS/$PHPVM_AUTO_ACTIVE/bin"
+        PATH=$(echo "$PATH" | tr ':' '\n' | grep -vxF "$old" | paste -sd ':' -)
+    fi
+
+    local new="$PHPVM_VERSIONS/$resolved/bin"
+    export PATH="$new:$PATH"
+    export PHPVM_AUTO_ACTIVE="$resolved"
+    if [[ $silent -eq 0 ]]; then _ok "Auto-switched to PHP $resolved  (from $rc)"; fi
+    return 0
+}
+
+# ── Is phpvm sourced from a shell rc? ─────────────────────────────────────────
+# True if any login rc already sources phpvm.sh, meaning `use` will persist
+# across sessions and the "add to your rc" warning would just be noise.
+_phpvm_in_rc() {
+    local f
+    for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.bash_profile"; do
+        [[ -f "$f" ]] && grep -Fq "$PHPVM_DIR/phpvm.sh" "$f" && return 0
+    done
+    return 1
+}
+
+# ==============================================================================
+#  AUTO-SWITCH COMMANDS (phpvm auto, phpvm hook)
+# ==============================================================================
+phpvm_auto() {
+    _phpvm_auto
+}
+
+phpvm_hook() {
+    local sub="${1:-status}"
+    local flag="$PHPVM_DIR/.auto-hook"
+    case "$sub" in
+        enable)
+            mkdir -p "$PHPVM_DIR"
+            touch "$flag"
+            _ok "Hook enabled. Restart your shell, or run:"
+            _dim "  source \"$PHPVM_DIR/phpvm.sh\""
+            ;;
+        disable)
+            if [[ -f "$flag" ]]; then
+                rm -f "$flag"
+                _ok "Hook disabled. Restart your shell to fully unregister."
+            else
+                _warn "Hook is not enabled."
+            fi
+            ;;
+        status)
+            if [[ -f "$flag" ]]; then
+                _ok "Hook is enabled ($flag)"
+            else
+                _dim "Hook is disabled. Run: phpvm hook enable"
+            fi
+            ;;
+        *)
+            echo ""
+            echo "  phpvm hook - manage the shell auto-switch hook"
+            echo "    phpvm hook enable     Enable .phpvmrc auto-switching on cd"
+            echo "    phpvm hook disable    Disable the hook"
+            echo "    phpvm hook status     Check whether the hook is enabled"
+            echo ""
+            ;;
+    esac
+}
+
+# --- src/60-ext.sh -----------------------------------------------------------------
 # ==============================================================================
 #  EXT COMMANDS
 # ==============================================================================
@@ -1416,6 +1332,7 @@ phpvm_ext() {
     esac
 }
 
+# --- src/70-composer.sh ------------------------------------------------------------
 # ==============================================================================
 #  COMPOSER (one global composer that follows the active PHP version)
 # ==============================================================================
@@ -1500,6 +1417,7 @@ EOF
     _dim "Composer follows your active PHP version — no need to re-run after 'phpvm use'."
 }
 
+# --- src/72-wpcli.sh ---------------------------------------------------------------
 # ==============================================================================
 #  WP-CLI (one global wp that follows the active PHP version)
 # ==============================================================================
@@ -1567,6 +1485,153 @@ EOF
     _dim "WP-CLI follows your active PHP version — no need to re-run after 'phpvm use'."
 }
 
+# --- src/80-maint.sh ---------------------------------------------------------------
+# ==============================================================================
+#  phpvm doctor  — read-only health check (never mutates state)
+# ==============================================================================
+phpvm_doctor() {
+    echo ""
+    echo -e "  \033[36mphpvm doctor — environment health check\033[0m"
+    echo -e "  \033[36m─────────────────────────────────────────────────────────\033[0m"
+
+    local ok=0 warn=0
+    _dok()  { printf '  \033[32m[ok]   %s\033[0m\n' "$*"; ok=$((ok+1)); }
+    _dwarn(){ printf '  \033[33m[warn] %s\033[0m\n' "$*"; warn=$((warn+1)); }
+
+    # 1. Active version + symlink health.
+    local cur
+    cur=$(_phpvm_current_version)
+    if [[ -n "$cur" ]]; then
+        _dok "Active PHP version: $cur"
+    else
+        _dwarn "No active PHP version. Run: phpvm use <version>"
+    fi
+
+    # 2. PATH: whichever php resolves first is what runs - but a second PHP
+    #    further down PATH still matters, because it is what comes back the
+    #    moment phpvm's bin drops off (a distro upgrade rewriting the rc, a
+    #    shell that never sourced phpvm.sh). `command -v` only ever reports the
+    #    winner, so walk PATH ourselves.
+    #
+    #    Split with parameter expansion rather than tr/awk: this is the check
+    #    that tells you PATH is broken, so it must not itself depend on finding
+    #    coreutils there. It also sidesteps zsh, where `for d in $PATH` does not
+    #    split on colons at all.
+    local php_paths="" rest="$PATH" d
+    while [[ -n "$rest" ]]; do
+        d="${rest%%:*}"
+        if [[ "$d" == "$rest" ]]; then rest=""; else rest="${rest#*:}"; fi
+        [[ -n "$d" && -x "$d/php" ]] || continue
+        case ":$php_paths:" in *":$d/php:"*) continue ;; esac   # PATH may repeat
+        php_paths="${php_paths:+$php_paths:}$d/php"
+    done
+
+    if [[ -z "$php_paths" ]]; then
+        _dwarn "No 'php' on PATH. Run: phpvm use <version> (and source phpvm.sh in your rc)."
+    else
+        local first="${php_paths%%:*}"
+        case "$first" in
+            "$PHPVM_CURRENT"/*|"$PHPVM_BIN"/*|"$PHPVM_VERSIONS"/*)
+                _dok "'php' resolves to phpvm: $first" ;;
+            *)
+                _dwarn "'php' resolves to a non-phpvm install: $first"
+                _dim "Ensure $PHPVM_DIR is sourced in your shell rc, then open a new shell." ;;
+        esac
+
+        local other="" p
+        rest="$php_paths"
+        while [[ -n "$rest" ]]; do
+            p="${rest%%:*}"
+            if [[ "$p" == "$rest" ]]; then rest=""; else rest="${rest#*:}"; fi
+            case "$p" in
+                # `:` rather than an empty body - bash 3.2 on macOS is fussy
+                # about case arms, which is what broke the first cut of this.
+                "$PHPVM_CURRENT"/*|"$PHPVM_BIN"/*|"$PHPVM_VERSIONS"/*) : ;;
+                *) other="$p"; break ;;
+            esac
+        done
+        if [[ -n "$other" && "$other" != "$first" ]]; then
+            _dwarn "Another PHP on PATH: $other"
+            _dim "It shadows phpvm whenever phpvm's bin is not first. Remove it or reorder PATH."
+        fi
+    fi
+
+    # 3. extension_dir must match what the active build was compiled with.
+    #    Checking the directory merely exists passes an ini left pointing at a
+    #    different version - the exact case fix-ini exists to repair. Go through
+    #    the version's own binary, not PATH: check 2 may have just told us PATH
+    #    resolves somewhere else entirely.
+    if [[ -n "$cur" ]]; then
+        local doc_php="$PHPVM_VERSIONS/$cur/bin/php"
+        if [[ ! -x "$doc_php" ]]; then
+            _dwarn "php binary missing for active version: $doc_php"
+        else
+            local ext_dir built_dir
+            ext_dir=$("$doc_php" -r "echo ini_get('extension_dir');" 2>/dev/null)
+            built_dir=$("$doc_php" -r "echo PHP_EXTENSION_DIR;" 2>/dev/null)
+            if [[ -z "$ext_dir" ]]; then
+                _dwarn "No extension_dir set in the active php.ini."
+                _dim "Fix with: phpvm fix-ini"
+            elif [[ "${ext_dir%/}" != "${built_dir%/}" ]]; then
+                _dwarn "extension_dir mismatch: '$ext_dir' != '$built_dir'"
+                _dim "Fix with: phpvm fix-ini"
+            elif [[ ! -d "$ext_dir" ]]; then
+                _dwarn "extension_dir does not exist: $ext_dir"
+                _dim "Fix with: phpvm fix-ini"
+            else
+                _dok "extension_dir matches active build."
+            fi
+        fi
+    fi
+
+    # 4. OpenSSL in PHP (HTTPS for composer / ext downloads).
+    if [[ -n "$cur" ]] && php -m 2>/dev/null | grep -qi '^openssl$'; then
+        _dok "openssl extension loaded (HTTPS OK)."
+    elif [[ -n "$cur" ]]; then
+        _dwarn "openssl not loaded — composer/HTTPS may fail."
+        _dim "Enable with: phpvm ext enable openssl"
+    fi
+
+    # 5. Build toolchain (needed for future installs — build from source).
+    local missing=()
+    local t
+    for t in gcc make autoconf bison re2c pkg-config; do
+        command -v "$t" &>/dev/null || missing+=("$t")
+    done
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        _dok "Build toolchain present (install/build ready)."
+    else
+        _dwarn "Missing build tools: ${missing[*]}"
+        _dim "See: phpvm deps"
+    fi
+
+    # 6. Host OpenSSL vs what is still buildable here. `install` already refuses
+    #    PHP <8.1 on OpenSSL 3 (_phpvm_check_openssl_compat), but only once you
+    #    have waited for a download - doctor should say it upfront.
+    local host_ssl
+    if host_ssl=$(_phpvm_openssl_version) && [[ -n "$host_ssl" ]]; then
+        local ssl_major="${host_ssl%%.*}"
+        if [[ "$ssl_major" =~ ^[0-9]+$ ]] && (( ssl_major >= 3 )); then
+            _dwarn "OpenSSL $host_ssl - PHP 8.0 and older cannot be built on this host."
+            _dim "Installed versions keep working; only new builds below 8.1 are refused."
+        else
+            _dok "OpenSSL $host_ssl (all supported PHP versions buildable)."
+        fi
+    else
+        _dim "  OpenSSL version could not be determined - build compatibility unknown."
+    fi
+
+    echo ""
+    if [[ $warn -eq 0 ]]; then
+        _ok "All checks passed ($ok ok)."
+    else
+        _warn "$warn warning(s), $ok ok. See fixes above."
+    fi
+    echo ""
+
+    unset -f _dok _dwarn 2>/dev/null
+}
+
 # ==============================================================================
 #  FIX-INI (sync extension_dir in active php.ini)
 # ==============================================================================
@@ -1601,6 +1666,70 @@ phpvm_fix_ini() {
     _dim "Verify: phpvm ext list"
 }
 
+# ==============================================================================
+#  SELF UPDATE
+# ==============================================================================
+phpvm_upgrade() {
+    local script_url="https://raw.githubusercontent.com/devhardiyanto/phpvm/main/linux/phpvm.sh"
+    local version_url="https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
+    local script_dest="$PHPVM_DIR/phpvm.sh"
+    local backup="$PHPVM_DIR/phpvm.sh.bak"
+
+    _step "Checking latest version ..."
+
+    local latest
+    if command -v curl &>/dev/null; then
+        latest=$(curl -fsSL --max-time 5 "$version_url" 2>/dev/null | tr -d '[:space:]')
+    elif command -v wget &>/dev/null; then
+        latest=$(wget -qO- --timeout=5 "$version_url" 2>/dev/null | tr -d '[:space:]')
+    else
+        _err "curl or wget is required."
+        return 1
+    fi
+
+    if [[ -z "$latest" ]]; then
+        _err "Could not reach GitHub. Check your connection."
+        return 1
+    fi
+
+    # Compare versions
+    local newer
+    newer=$(printf '%s\n%s' "$PHPVM_VERSION" "$latest" | sort -V | tail -1)
+    if [[ "$newer" == "$PHPVM_VERSION" && "$latest" == "$PHPVM_VERSION" ]]; then
+        _ok "Already up to date. (phpvm $PHPVM_VERSION)"
+        return 0
+    fi
+
+    _step "Upgrading phpvm $PHPVM_VERSION → $latest ..."
+
+    # Backup
+    cp "$script_dest" "$backup"
+    _dim "Backup saved: $backup"
+
+    # Download new version
+    local tmp="$PHPVM_DIR/phpvm.sh.tmp"
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$script_url" -o "$tmp" || { _err "Download failed."; return 1; }
+    else
+        wget -qO "$tmp" "$script_url" || { _err "Download failed."; return 1; }
+    fi
+
+    # Verify it looks like a valid phpvm script
+    if ! grep -q "PHPVM_VERSION" "$tmp"; then
+        _err "Downloaded file seems invalid. Rolling back."
+        rm -f "$tmp"
+        return 1
+    fi
+
+    mv "$tmp" "$script_dest"
+    chmod +x "$script_dest"
+
+    _ok "phpvm upgraded to $latest!"
+    _dim "Run: source ~/.bashrc  (or restart terminal)"
+    _dim "Backup of old version: $backup"
+}
+
+# --- src/90-help.sh ----------------------------------------------------------------
 # ==============================================================================
 #  HELP
 # ==============================================================================
@@ -1694,112 +1823,6 @@ EOF
 }
 
 # ==============================================================================
-#  SELF UPDATE
-# ==============================================================================
-phpvm_upgrade() {
-    local script_url="https://raw.githubusercontent.com/devhardiyanto/phpvm/main/linux/phpvm.sh"
-    local version_url="https://raw.githubusercontent.com/devhardiyanto/phpvm/main/version.txt"
-    local script_dest="$PHPVM_DIR/phpvm.sh"
-    local backup="$PHPVM_DIR/phpvm.sh.bak"
-
-    _step "Checking latest version ..."
-
-    local latest
-    if command -v curl &>/dev/null; then
-        latest=$(curl -fsSL --max-time 5 "$version_url" 2>/dev/null | tr -d '[:space:]')
-    elif command -v wget &>/dev/null; then
-        latest=$(wget -qO- --timeout=5 "$version_url" 2>/dev/null | tr -d '[:space:]')
-    else
-        _err "curl or wget is required."
-        return 1
-    fi
-
-    if [[ -z "$latest" ]]; then
-        _err "Could not reach GitHub. Check your connection."
-        return 1
-    fi
-
-    # Compare versions
-    local newer
-    newer=$(printf '%s\n%s' "$PHPVM_VERSION" "$latest" | sort -V | tail -1)
-    if [[ "$newer" == "$PHPVM_VERSION" && "$latest" == "$PHPVM_VERSION" ]]; then
-        _ok "Already up to date. (phpvm $PHPVM_VERSION)"
-        return 0
-    fi
-
-    _step "Upgrading phpvm $PHPVM_VERSION → $latest ..."
-
-    # Backup
-    cp "$script_dest" "$backup"
-    _dim "Backup saved: $backup"
-
-    # Download new version
-    local tmp="$PHPVM_DIR/phpvm.sh.tmp"
-    if command -v curl &>/dev/null; then
-        curl -fsSL "$script_url" -o "$tmp" || { _err "Download failed."; return 1; }
-    else
-        wget -qO "$tmp" "$script_url" || { _err "Download failed."; return 1; }
-    fi
-
-    # Verify it looks like a valid phpvm script
-    if ! grep -q "PHPVM_VERSION" "$tmp"; then
-        _err "Downloaded file seems invalid. Rolling back."
-        rm -f "$tmp"
-        return 1
-    fi
-
-    mv "$tmp" "$script_dest"
-    chmod +x "$script_dest"
-
-    _ok "phpvm upgraded to $latest!"
-    _dim "Run: source ~/.bashrc  (or restart terminal)"
-    _dim "Backup of old version: $backup"
-}
-
-# ==============================================================================
-#  AUTO-SWITCH COMMANDS (phpvm auto, phpvm hook)
-# ==============================================================================
-phpvm_auto() {
-    _phpvm_auto
-}
-
-phpvm_hook() {
-    local sub="${1:-status}"
-    local flag="$PHPVM_DIR/.auto-hook"
-    case "$sub" in
-        enable)
-            mkdir -p "$PHPVM_DIR"
-            touch "$flag"
-            _ok "Hook enabled. Restart your shell, or run:"
-            _dim "  source \"$PHPVM_DIR/phpvm.sh\""
-            ;;
-        disable)
-            if [[ -f "$flag" ]]; then
-                rm -f "$flag"
-                _ok "Hook disabled. Restart your shell to fully unregister."
-            else
-                _warn "Hook is not enabled."
-            fi
-            ;;
-        status)
-            if [[ -f "$flag" ]]; then
-                _ok "Hook is enabled ($flag)"
-            else
-                _dim "Hook is disabled. Run: phpvm hook enable"
-            fi
-            ;;
-        *)
-            echo ""
-            echo "  phpvm hook - manage the shell auto-switch hook"
-            echo "    phpvm hook enable     Enable .phpvmrc auto-switching on cd"
-            echo "    phpvm hook disable    Disable the hook"
-            echo "    phpvm hook status     Check whether the hook is enabled"
-            echo ""
-            ;;
-    esac
-}
-
-# ==============================================================================
 #  DID-YOU-MEAN (unknown command handling)
 # ==============================================================================
 # Iterative Levenshtein distance between $1 and $2 (two-row, O(n) memory).
@@ -1855,6 +1878,7 @@ _phpvm_unknown() {
     return 1
 }
 
+# --- src/99-entry.sh ---------------------------------------------------------------
 # ==============================================================================
 #  ENTRY POINT
 # ==============================================================================
